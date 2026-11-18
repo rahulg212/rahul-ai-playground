@@ -15,11 +15,14 @@
 import { iterateSSE } from '@/lib/sse';
 import { providerLabel, raiseForStatus, toPlaygroundError } from '@/lib/errors';
 import { providerFetch } from '@/lib/transport';
+// PlaygroundError is a CLASS, used with `instanceof` below — it must be a
+// value import, not `import type` (a type-only import is erased at runtime,
+// which made `error instanceof PlaygroundError` throw a ReferenceError).
+import { PlaygroundError } from '@/lib/types';
 import type {
   BuiltRequest,
   ChatMessage,
   GenerationSettings,
-  PlaygroundError,
   ProviderAdapter,
   StreamOutcome,
   TokenUsage,

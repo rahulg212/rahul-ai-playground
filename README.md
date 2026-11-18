@@ -8,20 +8,26 @@ A local-first playground to chat with OpenAI, Anthropic Claude, Google Gemini an
 
 - 4 providers: OpenAI, Anthropic, Google Gemini, OpenRouter
 - Per-provider API key management with show/hide, a Test Key button (auto-reloads the model list on success), and delete
+- **One-click "Login with OpenRouter"** (OAuth PKCE, inspired by G0DM0D3) — no copy-pasting keys
 - Model lists fetched from each provider's models endpoint, with a searchable dropdown, a "Free only" filter (OpenRouter), free-model badges, and support for custom model IDs
 - Streaming (SSE) responses with a Stop button, for all 4 providers
 - Reasoning support: chain-of-thought from reasoning models (all current OpenRouter `:free` models, Anthropic extended thinking) is shown in a collapsible "Thinking" block
 - Markdown rendering with syntax-highlighted code blocks and a per-block copy button
 - Message actions: copy, edit & resend, regenerate, delete
+- **Quality score** (G0DM0D3 "Tastemaker"-inspired): every assistant answer gets a 0–100 score (structure / completeness / directness / richness / speed) with a grade badge and a breakdown tooltip
+- **Refine (liquid mode)**: one click re-asks the same model to improve its answer; every revision is kept as a version (v1, v2, …) and you can flip between them
+- **Race mode (model arena)**: send one prompt to up to 3 models in parallel (across providers), watch them compete live, and keep the best-scoring answer — flip through all candidates under the bubble
+- **Persona quick-switcher** in the top bar (Default / Code Expert / Concise / Teacher / Creative / Analyst) — one click applies a curated system prompt + recommended temperature
 - System prompt editor with named presets (Helpful Assistant, Code Expert, Translator built in); load, rename and delete presets
 - Generation settings: temperature, max tokens, top_p, stop sequences (disabled when a provider does not support them), reset to defaults
 - Conversation history sidebar with auto-titles, rename, delete and search; each conversation remembers its own provider, model, system prompt and settings
 - Context limit (send all history or only the last N messages) with an approximate token counter
 - Raw debug panel showing the exact JSON request (API key masked) and the raw streamed response
 - Response time, token usage and model shown under each assistant message
-- Clear error messages with HTTP status (invalid key, rate limit, CORS, model not found)
+- Clear error messages with HTTP status (invalid key, rate limit, CORS, model not found), transient-failure auto-retry, and one-click "retry with a free model" recovery on OpenRouter
 - Export a conversation as JSON/Markdown, import conversation JSON, and full backup export/import (optionally without API keys)
-- Dark/light mode, responsive layout, toast notifications
+- **Three themes**: light, dark, and a G0DM0D3-inspired phosphor **Terminal** theme (green-on-black, JetBrains Mono, scanlines + glow) — the theme button cycles all three
+- Responsive layout, toast notifications
 
 ## Tech stack
 
@@ -56,6 +62,10 @@ src/lib/streaming.ts              The single place that executes a streamed chat
 src/lib/errors.ts                 Error normalization (PlaygroundError: auth / rate limit / not found / CORS / ...)
 src/lib/storage.ts                localStorage keys, defaults, factories
 src/lib/tokens.ts                 Approximate token counting, context limit, auto titles
+src/lib/score.ts                  Quality scoring (Tastemaker-lite): structure / completeness / directness / richness / speed
+src/lib/messageView.ts            Display resolution for race candidates + refine versions
+src/lib/personas.ts               Built-in personas for the top-bar quick switcher
+src/lib/openrouterOAuth.ts        OpenRouter OAuth (PKCE): login redirect, code exchange
 src/lib/exportUtils.ts            JSON/Markdown export + full backups
 src/lib/providerAdapters/         One adapter per provider:
   openai.ts                       POST /v1/chat/completions, Bearer auth, system role message; handles

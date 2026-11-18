@@ -2,31 +2,124 @@
 
 /**
  * Top bar: panel toggles, conversation title, provider/model summary,
- * approximate token counter, raw-panel toggle and the theme switch.
+ * approximate token counter, persona quick-switcher (G0DM0D3 mode-switcher
+ * style), raw-panel toggle and the 3-way theme switch (light/dark/terminal).
  */
 import React from 'react';
-import { Coins, Menu, Moon, PanelLeft, PanelRight, Sun, TerminalSquare } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Coins,
+  Menu,
+  Moon,
+  PanelLeft,
+  PanelRight,
+  Sun,
+  Terminal,
+  TerminalSquare,
+} from 'lucide-react';
 import { useTheme } from 'next-themes';
+import { toast } from 'sonner';
 import { usePlayground } from '@/components/playground/context';
 import { ModelPicker } from '@/components/playground/ModelPicker';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { PERSONAS, matchPersona } from '@/lib/personas';
+import { cn } from '@/lib/utils';
+
+const THEME_ORDER = ['light', 'dark', 'terminal'] as const;
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
   // The whole app is client-side only (dynamic ssr:false), so resolvedTheme
   // is available right after mount without a mounted-state dance.
-  const isDark = resolvedTheme === 'dark';
+  const current = THEME_ORDER.includes(resolvedTheme as (typeof THEME_ORDER)[number])
+    ? (resolvedTheme as (typeof THEME_ORDER)[number])
+    : 'light';
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(current) + 1) % THEME_ORDER.length];
+
+  const meta: Record<(typeof THEME_ORDER)[number], { label: string; icon: React.ReactNode }> = {
+    light: { label: 'Light mode — click for dark', icon: <Sun className="h-4 w-4" /> },
+    dark: { label: 'Dark mode — click for terminal', icon: <Moon className="h-4 w-4" /> },
+    terminal: { label: 'Terminal mode (G0DM0D3) — click for light', icon: <Terminal className="h-4 w-4" /> },
+  };
+
   return (
     <Button
       variant="ghost"
       size="icon"
       className="h-8 w-8"
-      onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      title={isDark ? 'Light mode' : 'Dark mode'}
+      onClick={() => setTheme(next)}
+      aria-label={meta[current].label}
+      title={meta[current].label}
     >
-      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {meta[current].icon}
     </Button>
+  );
+}
+
+/**
+ * Persona quick-switcher: applies a curated system prompt (+ recommended
+ * temperature) to the active conversation in one click — the everyday shortcut
+ * version of the full preset editor in the settings panel.
+ */
+function PersonaSwitcher() {
+  const { activeConversation, setSystemPrompt, setGenerationSettings } = usePlayground();
+  const currentPersona = activeConversation ? matchPersona(activeConversation.systemPrompt) : null;
+
+  const applyPersona = (personaId: string) => {
+    const persona = PERSONAS.find((p) => p.id === personaId);
+    if (!persona) return;
+    setSystemPrompt(persona.prompt);
+    if (persona.temperature !== undefined) setGenerationSettings({ temperature: persona.temperature });
+    toast.success(`Persona: ${persona.name}`);
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="hidden h-7 items-center gap-1.5 rounded-full border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground md:inline-flex"
+          title="Persona — one-click system prompt presets"
+          aria-label="Switch persona"
+        >
+          <span
+            className={cn(
+              'h-2 w-2 rounded-full bg-gradient-to-br',
+              currentPersona?.gradient ?? 'from-foreground/60 to-foreground/30',
+            )}
+          />
+          <span className="max-w-[110px] truncate">{currentPersona?.name ?? 'Custom'}</span>
+          <ChevronDown className="h-3 w-3 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">Persona</DropdownMenuLabel>
+        {PERSONAS.map((persona) => {
+          const active = currentPersona?.id === persona.id;
+          return (
+            <DropdownMenuItem key={persona.id} onClick={() => applyPersona(persona.id)} className="gap-2.5">
+              <span
+                className={cn('h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-br', persona.gradient)}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{persona.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{persona.description}</span>
+              </span>
+              {active && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -81,6 +174,8 @@ export function TopBar() {
 
       {/* Right side actions */}
       <div className="flex shrink-0 items-center gap-0.5">
+        {/* G0DM0D3-style quick persona switcher. */}
+        <PersonaSwitcher />
         <Button
           variant="ghost"
           size="sm"

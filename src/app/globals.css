@@ -121,6 +121,107 @@
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* TERMINAL theme — G0DM0D3-inspired phosphor aesthetic                */
+/* A third theme alongside light/dark: green-on-black CRT terminal,    */
+/* monospaced type, subtle scanlines and phosphor glow.                */
+/* ------------------------------------------------------------------ */
+.terminal {
+  /* Re-map the two font variables so every font-sans / font-mono utility
+     resolves to JetBrains Mono inside this theme. */
+  --font-geist-sans: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-geist-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 0.5rem;
+  --background: #0d0208;
+  --foreground: #e4e4e4;
+  --card: #0a0a0a;
+  --card-foreground: #e4e4e4;
+  --popover: #0a0f0a;
+  --popover-foreground: #e4e4e4;
+  --primary: #00ff41;
+  --primary-foreground: #051405;
+  --secondary: #0d1f0d;
+  --secondary-foreground: #b8e6c0;
+  --muted: #0d1a10;
+  --muted-foreground: #6f9b78;
+  --accent: #0d2413;
+  --accent-foreground: #d2ffd2;
+  --destructive: #ff3e3e;
+  --border: #1a3a1a;
+  --input: #1a3a1a;
+  --ring: #00ff41;
+  --chart-1: #00ff41;
+  --chart-2: #00c8ff;
+  --chart-3: #ffcc00;
+  --chart-4: #ff6b6b;
+  --chart-5: #a855f7;
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #e4e4e4;
+  --sidebar-primary: #00ff41;
+  --sidebar-primary-foreground: #051405;
+  --sidebar-accent: #0d1f0d;
+  --sidebar-accent-foreground: #d2ffd2;
+  --sidebar-border: #1a3a1a;
+  --sidebar-ring: #00ff41;
+}
+
+.terminal body {
+  font-family: var(--font-geist-sans);
+  letter-spacing: 0.01em;
+}
+
+/* CRT scanlines + faint phosphor vignette. Fixed overlay, never intercepts
+   pointer events, and stays subtle enough for real use. */
+.terminal body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 0, 0, 0.14) 2px,
+      rgba(0, 0, 0, 0.14) 4px
+    ),
+    radial-gradient(120% 90% at 50% 40%, transparent 60%, rgba(0, 12, 2, 0.55) 100%);
+  mix-blend-mode: multiply;
+}
+
+/* Selection in phosphor green. */
+.terminal ::selection {
+  background: rgba(0, 255, 65, 0.28);
+  color: #eaffea;
+}
+
+/* Phosphor glow on the most prominent accents. */
+.terminal .phosphor-glow {
+  text-shadow: 0 0 6px rgba(0, 255, 65, 0.55), 0 0 18px rgba(0, 255, 65, 0.22);
+}
+.terminal .glow-ring {
+  box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.45), 0 0 14px rgba(0, 255, 65, 0.18);
+}
+/* Primary buttons get a soft green bloom on hover, like G0DM0D3's send button. */
+.terminal [data-terminal-glow]:hover {
+  box-shadow: 0 0 16px rgba(0, 255, 65, 0.5);
+}
+/* Focus rings glow green instead of the default outline color. */
+.terminal :focus-visible {
+  outline-color: rgba(0, 255, 65, 0.7);
+}
+
+/* Blinking block cursor used by the streaming caret in terminal mode. */
+.terminal .cursor-blink {
+  animation: cursor-blink 1s steps(2, start) infinite;
+}
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
 /* Slim, subtle scrollbars for the chat, list and raw JSON panels. */
 .scrollbar-thin {
   scrollbar-width: thin;

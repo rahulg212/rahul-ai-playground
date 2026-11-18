@@ -19,6 +19,52 @@ export interface TokenUsage {
   totalTokens?: number;
 }
 
+/** Grade buckets for the response quality score (G0DM0D3-inspired). */
+export type QualityGrade = 'elite' | 'strong' | 'decent' | 'weak' | 'poor';
+
+export interface QualityBreakdownItem {
+  label: string;
+  /** 0-100. */
+  score: number;
+  /** One-line human explanation of the sub-score. */
+  hint: string;
+}
+
+/**
+ * Client-side heuristic quality score for an assistant response — inspired by
+ * G0DM0D3's "Tastemaker" score. Purely informational: it helps the user see
+ * WHICH answers deserve a "Refine" or a "Race" against another model.
+ */
+export interface QualityScore {
+  /** 0-100 overall. */
+  overall: number;
+  grade: QualityGrade;
+  breakdown: QualityBreakdownItem[];
+}
+
+/** One model entry in a Race (parallel multi-model arena). */
+export interface RaceCandidate {
+  provider: ProviderId;
+  model: string;
+  text: string;
+  reasoning?: string;
+  responseTimeMs?: number;
+  usage?: TokenUsage;
+  /** Set when this candidate failed (e.g. no key / provider error). */
+  error?: string;
+  score?: number;
+}
+
+/** A stored revision of an assistant answer created by "Refine" (liquid mode). */
+export interface LiquidVersion {
+  content: string;
+  reasoning?: string;
+  score?: number;
+  responseTimeMs?: number;
+  usage?: TokenUsage;
+  createdAt: number;
+}
+
 /** Provenance info attached to assistant messages. */
 export interface AssistantMeta {
   provider: ProviderId;
@@ -28,6 +74,17 @@ export interface AssistantMeta {
   /** Set when the response was cut short (user stop or API error). */
   stopped?: boolean;
   error?: string;
+  /** Heuristic quality score computed when the response completed. */
+  quality?: QualityScore;
+  /**
+   * Race result: every candidate that competed for this answer. The message
+   * content/usage shown in the UI come from the ACTIVE candidate (which is the
+   * auto-picked winner until the user flips the navigator).
+   */
+  race?: {
+    candidates: RaceCandidate[];
+    activeIndex: number;
+  };
 }
 
 /** A single chat message in the internal format. */
@@ -43,6 +100,15 @@ export interface ChatMessage {
    */
   reasoning?: string;
   meta?: AssistantMeta;
+  /**
+   * "Refine" (liquid) history — version 0 is the answer as originally
+   * generated, later versions are improvements requested by the user.
+   * Present once the user has refined this answer at least once.
+   */
+  liquid?: {
+    versions: LiquidVersion[];
+    activeIndex: number;
+  };
 }
 
 /** Sampling / generation parameters. */
@@ -80,6 +146,18 @@ export interface Preset {
 export interface AppSettings {
   apiKeys: Record<ProviderId, string>;
   showRawPanel: boolean;
+}
+
+/** A model picked as a Race competitor (provider + raw model id). */
+export interface RaceSpec {
+  provider: ProviderId;
+  model: string;
+}
+
+/** Persisted Race configuration. */
+export interface RaceConfig {
+  enabled: boolean;
+  models: RaceSpec[];
 }
 
 /** A model entry returned by a provider's models endpoint. */

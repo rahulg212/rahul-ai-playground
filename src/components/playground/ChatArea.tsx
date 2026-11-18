@@ -2,11 +2,11 @@
 
 /**
  * The main chat area: scrollable message list, empty state, error banner,
- * raw debug panel and the composer. Auto-scrolls to the newest content while
- * the user is near the bottom.
+ * live race panel (multi-model arena), raw debug panel and the composer.
+ * Auto-scrolls to the newest content while the user is near the bottom.
  */
 import React, { useEffect, useRef } from 'react';
-import { KeyRound, Settings2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, KeyRound, Loader2, Settings2, Trophy } from 'lucide-react';
 import { usePlayground } from '@/components/playground/context';
 import { ChatErrorBanner, MessageBubble } from '@/components/playground/MessageBubble';
 import { ChatInput } from '@/components/playground/ChatInput';
@@ -52,6 +52,62 @@ function EmptyState() {
   );
 }
 
+/**
+ * Live race status (G0DM0D3 racing): one row per candidate with a live status
+ * + character counter, so users SEE all competitors working in parallel while
+ * the leader streams into the bubble below.
+ */
+function RaceLivePanel() {
+  const { raceLive } = usePlayground();
+  if (!raceLive) return null;
+  return (
+    <div
+      className="mx-auto mb-4 w-full max-w-3xl rounded-xl border border-dashed p-3"
+      role="status"
+      aria-label="Race in progress"
+    >
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
+        <Trophy className="h-3.5 w-3.5 text-amber-500" />
+        Race in progress — {raceLive.candidates.filter((c) => c.done).length}/{raceLive.candidates.length} finished
+      </div>
+      <div className="space-y-1.5">
+        {raceLive.candidates.map((candidate, index) => (
+          <div
+            key={`${candidate.provider}-${candidate.model}-${index}`}
+            className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs"
+          >
+            {candidate.done ? (
+              candidate.error ? (
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+              )
+            ) : (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+            )}
+            <span className="min-w-0 flex-1 truncate font-mono" title={candidate.model}>
+              {candidate.model}
+            </span>
+            {candidate.error ? (
+              <span className="max-w-[280px] truncate text-destructive" title={candidate.error}>
+                {candidate.error}
+              </span>
+            ) : (
+              <span className="tabular-nums text-muted-foreground">
+                {candidate.done
+                  ? `${(candidate.responseTimeMs ?? 0) / 1000 > 0 ? `${((candidate.responseTimeMs ?? 0) / 1000).toFixed(1)}s · ` : ''}${candidate.text.length} chars`
+                  : candidate.text.length > 0
+                    ? `streaming · ${candidate.text.length} chars`
+                    : 'waiting for first token…'}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ChatArea() {
   const {
     activeConversation,
@@ -60,6 +116,7 @@ export function ChatArea() {
     streamingText,
     streamingReasoning,
     chatError,
+    raceLive,
   } = usePlayground();
   const scrollRef = useRef<HTMLDivElement>(null);
   // Only follow the stream while the user has not scrolled up to read.
@@ -68,13 +125,14 @@ export function ChatArea() {
   const conversation = activeConversation;
   const messages = conversation?.messages ?? [];
   const showStreamingHere = isStreaming && streamingConvId === conversation?.id;
+  const showRaceHere = raceLive !== null && raceLive.conversationId === conversation?.id;
 
   // Auto-scroll when new content arrives.
   useEffect(() => {
     const element = scrollRef.current;
     if (!element || !nearBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [messages.length, streamingText, streamingReasoning, chatError, showStreamingHere]);
+  }, [messages.length, streamingText, streamingReasoning, chatError, showStreamingHere, showRaceHere]);
 
   const handleScroll = () => {
     const element = scrollRef.current;
@@ -92,6 +150,7 @@ export function ChatArea() {
           <EmptyState />
         ) : (
           <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
+            {showRaceHere && <RaceLivePanel />}
             {messages.map((message, index) => (
               <MessageBubble
                 key={message.id}

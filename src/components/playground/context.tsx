@@ -32,8 +32,11 @@ import {
   parseFullBackup,
   parseImportedConversation,
 } from '@/lib/exportUtils';
+import { consumeOpenRouterOAuthCallback } from '@/lib/openrouterOAuth';
+import { resolveMessageView } from '@/lib/messageView';
 import { getAdapter } from '@/lib/providerAdapters';
 import { DEFAULT_MODELS, PROVIDER_IDS } from '@/lib/providerDefaults';
+import { scoreResponse } from '@/lib/score';
 import { runChatStream } from '@/lib/streaming';
 import {
   STORAGE_KEYS,
@@ -61,9 +64,13 @@ import type {
   ModelInfo,
   Preset,
   ProviderId,
+  QualityScore,
+  RaceCandidate,
+  RaceConfig,
   RawDebug,
   StreamOutcome,
   TestKeyResult,
+  TokenUsage,
 } from '@/lib/types';
 
 export interface ModelsState {
@@ -98,6 +105,33 @@ function pickFreeModel(models: ModelInfo[]): string | null {
  * reliable instead of failing on the first rate-limit window.
  */
 const MAX_AUTO_RETRIES = 2;
+
+/** Hard cap on Race competitors (parallel streams get expensive fast). */
+const MAX_RACE_MODELS = 3;
+
+/**
+ * The final user turn of a "Refine" request (G0DM0D3's liquid mode, adapted).
+ * The draft being improved is sent as the preceding assistant message.
+ */
+const REFINE_INSTRUCTION =
+  'Your answer above is a draft. Rewrite it so it is genuinely better: fix inaccuracies, add important missing details, tighten the structure (markdown headings/bullets where they help), cut hedging and filler, and make it more concrete with examples, numbers or code where relevant. Keep the same language and roughly the same scope as the original question. Output ONLY the improved answer — no preamble, no commentary about the rewrite.';
+
+/** One live competitor while a Race is running. */
+export interface RaceLiveCandidate {
+  provider: ProviderId;
+  model: string;
+  text: string;
+  reasoning?: string;
+  done: boolean;
+  error?: string;
+  responseTimeMs?: number;
+  usage?: TokenUsage;
+}
+
+export interface RaceLiveState {
+  conversationId: string;
+  candidates: RaceLiveCandidate[];
+}
 
 export interface PlaygroundContextValue {
   /** True once the active conversation exists (localStorage loaded synchronously). */
@@ -135,6 +169,25 @@ export interface PlaygroundContextValue {
   /** Optional one-click recovery attached to the current chat error. */
   chatErrorAction: ChatErrorAction | null;
   dismissChatError: () => void;
+
+  // Race mode (multi-model arena, G0DM0D3-inspired)
+  raceConfig: RaceConfig;
+  toggleRace: () => void;
+  /** Add/remove a competitor; silently capped at three. */
+  toggleRaceModel: (spec: { provider: ProviderId; model: string }) => void;
+  removeRaceModel: (spec: { provider: ProviderId; model: string }) => void;
+  /** Live race progress (null while idle). */
+  raceLive: RaceLiveState | null;
+  /** Flip which race candidate an assistant message displays. */
+  setActiveRaceCandidate: (messageId: string, index: number) => void;
+
+  // Refine (liquid) — iterative answer improvement
+  refineMessage: (messageId: string) => Promise<void>;
+  isRefining: boolean;
+  refiningMessageId: string | null;
+  refiningText: string;
+  /** Flip which liquid version an assistant message displays. */
+  setLiquidVersion: (messageId: string, index: number) => void;
 
   // API keys
   settings: AppSettings;
@@ -208,6 +261,12 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     [],
     loadPresets,
   );
+  // Race configuration (enabled + competitor list) — persisted separately so
+  // AppSettings keeps its simple shape.
+  const { value: raceConfig, setValue: setRaceConfig } = useLocalStorage<RaceConfig>(
+    STORAGE_KEYS.race,
+    { enabled: false, models: [] },
+  );
 
   /* ---------------- in-memory state ---------------- */
   const [isStreaming, setIsStreaming] = useState(false);
@@ -224,6 +283,9 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [mobileDrawer, setMobileDrawer] = useState<'sidebar' | 'settings' | null>(null);
+  const [raceLive, setRaceLive] = useState<RaceLiveState | null>(null);
+  const [refiningMessageId, setRefiningMessageId] = useState<string | null>(null);
+  const [refiningText, setRefiningText] = useState('');
 
   /* ---------------- refs for async flows ---------------- */
   const conversationsRef = useRef(conversations);
@@ -232,6 +294,10 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   const activeIdRef = useRef(activeId);
   const modelsRef = useRef(models);
   const abortRef = useRef<AbortController | null>(null);
+  /** One controller per Race competitor — Stop aborts all of them. */
+  const raceAbortRefs = useRef<AbortController[]>([]);
+  const raceConfigRef = useRef(raceConfig);
+  const isRefiningRef = useRef(false);
   const streamingTextRef = useRef('');
   const streamingReasoningRef = useRef('');
   const isStreamingRef = useRef(false);
@@ -240,6 +306,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { presetsRef.current = presets; }, [presets]);
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
+  useEffect(() => { raceConfigRef.current = raceConfig; }, [raceConfig]);
 
   const activeConversation = useMemo(() => {
     if (conversations.length === 0) return null;
@@ -266,6 +333,27 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     setConversations((previous) => migrateConversations(previous));
   }, [setConversations]);
+
+  // OpenRouter OAuth (PKCE) callback: if the page just came back from
+  // openrouter.ai with ?code=..., exchange it for an API key and store it
+  // like a manually pasted one. No-op on every other load.
+  useEffect(() => {
+    void (async () => {
+      const result = await consumeOpenRouterOAuthCallback();
+      if (!result) return;
+      if (result.key) {
+        setSettings((previous) => ({
+          ...previous,
+          apiKeys: { ...previous.apiKeys, openrouter: result.key as string },
+        }));
+        toast.success('Connected via OpenRouter OAuth — key saved.');
+        void loadModels('openrouter', true);
+        void testApiKey('openrouter');
+      } else if (result.error) {
+        toast.error(result.error);
+      }
+    })();
+  }, []);
 
   const ready = activeConversation !== null;
 
@@ -390,8 +478,18 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
 
   /* ---------------- streaming ---------------- */
 
+  /**
+   * Run one streamed completion and append the assistant message.
+   * opts.temperatureBoost: temporary sampling boost WITHOUT persisting — used
+   * by Regenerate so a retry explores a slightly different answer (the trick
+   * G0DM0D3 uses for its "try again" strategies).
+   */
   const runCompletion = useCallback(
-    async (conversationId: string, history: ChatMessage[]) => {
+    async (
+      conversationId: string,
+      history: ChatMessage[],
+      opts?: { temperatureBoost?: number },
+    ) => {
       const conversation = conversationsRef.current.find((c) => c.id === conversationId);
       if (!conversation || history.length === 0) return;
 
@@ -406,6 +504,16 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       }
 
       const limited = applyContextLimit(history, conversation.contextLimit);
+      // The last user turn is what the quality scorer measures against.
+      const lastUser = [...limited].reverse().find((m) => m.role === 'user');
+      const boost = opts?.temperatureBoost ?? 0;
+      const effectiveSettings: GenerationSettings =
+        boost > 0
+          ? {
+              ...conversation.settings,
+              temperature: Math.min(2, Math.round((conversation.settings.temperature + boost) * 100) / 100),
+            }
+          : conversation.settings;
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -421,6 +529,13 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       setRawDebug(null);
 
       const appendAssistant = (content: string, extra?: Partial<AssistantMeta>, reasoning?: string) => {
+        const isPlaceholder = content.startsWith('*(');
+        // G0DM0D3-style quality score, computed once and stored on the message
+        // (score chip + tooltip in the UI). Placeholders stay unscored.
+        const quality: QualityScore | undefined =
+          !isPlaceholder && content.trim().length > 0
+            ? scoreResponse(content, lastUser?.content ?? '', extra?.responseTimeMs, extra?.usage)
+            : undefined;
         const message: ChatMessage = {
           id: uid(),
           role: 'assistant',
@@ -431,6 +546,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
             provider: conversation.provider,
             model: conversation.model,
             ...extra,
+            quality,
           },
         };
         updateConversationById(conversationId, (c) => ({
@@ -453,7 +569,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
               model: conversation.model || adapter.defaultModel,
               systemPrompt: conversation.systemPrompt,
               history: limited,
-              settings: conversation.settings,
+              settings: effectiveSettings,
               signal: controller.signal,
               onDelta: (delta) => {
                 streamingTextRef.current += delta;
@@ -567,6 +683,414 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     [updateConversationById],
   );
 
+  /* ---------------- race mode (multi-model arena) ---------------- */
+
+  /**
+   * G0DM0D3-inspired Race: fire the SAME prompt at up to MAX_RACE_MODELS
+   * models in parallel, stream the current leader into the chat bubble, then
+   * store every candidate on the resulting assistant message. The auto-winner
+   * is the highest quality score; the user can flip through all candidates
+   * with the navigator under the bubble. Only the winner enters the context.
+   */
+  const runRace = useCallback(
+    async (conversationId: string, history: ChatMessage[]) => {
+      const conversation = conversationsRef.current.find((c) => c.id === conversationId);
+      if (!conversation) return;
+
+      const specs = raceConfigRef.current.models;
+      const lastUser = [...history].reverse().find((m) => m.role === 'user');
+      const limited = applyContextLimit(history, conversation.contextLimit);
+
+      isStreamingRef.current = true;
+      streamingTextRef.current = '';
+      streamingReasoningRef.current = '';
+      setStreamingText('');
+      setStreamingReasoning('');
+      setStreamingConvId(conversationId);
+      setIsStreaming(true);
+      setChatError(null);
+      setChatErrorAction(null);
+      setRawDebug(null);
+
+      // Scratch candidate state (refs keep the closures cheap).
+      const scratch = specs.map((spec) => ({
+        spec,
+        text: '',
+        reasoning: '',
+        done: false,
+        error: undefined as string | undefined,
+        responseTimeMs: undefined as number | undefined,
+        usage: undefined as TokenUsage | undefined,
+        outcome: null as StreamOutcome | null,
+      }));
+
+      const publish = () => {
+        setRaceLive({
+          conversationId,
+          candidates: scratch.map((c) => ({
+            provider: c.spec.provider,
+            model: c.spec.model,
+            text: c.text,
+            reasoning: c.reasoning || undefined,
+            done: c.done,
+            error: c.error,
+            responseTimeMs: c.responseTimeMs,
+            usage: c.usage,
+          })),
+        });
+        // Stream the current leader (most text so far) into the main bubble.
+        let leader = -1;
+        let leaderLength = 0;
+        scratch.forEach((c, index) => {
+          if (c.text.length > leaderLength) {
+            leaderLength = c.text.length;
+            leader = index;
+          }
+        });
+        streamingTextRef.current = leader >= 0 ? scratch[leader].text : '';
+        setStreamingText(streamingTextRef.current);
+        const leaderReasoning = leader >= 0 ? scratch[leader].reasoning : '';
+        streamingReasoningRef.current = leaderReasoning;
+        setStreamingReasoning(leaderReasoning);
+      };
+
+      raceAbortRefs.current = scratch.map(() => new AbortController());
+      publish();
+
+      await Promise.all(
+        scratch.map(async (candidate, index) => {
+          try {
+            const adapter = getAdapter(candidate.spec.provider);
+            const apiKey = settingsRef.current.apiKeys[candidate.spec.provider];
+            if (!apiKey) {
+              throw new Error(`No API key saved for ${providerLabel(candidate.spec.provider)}`);
+            }
+            const outcome = await runChatStream({
+              adapter,
+              apiKey,
+              model: candidate.spec.model || adapter.defaultModel,
+              systemPrompt: conversation.systemPrompt,
+              history: limited,
+              settings: conversation.settings,
+              signal: raceAbortRefs.current[index].signal,
+              onDelta: (delta) => {
+                candidate.text += delta;
+                publish();
+              },
+              onReasoning: (delta) => {
+                candidate.reasoning += delta;
+                publish();
+              },
+            });
+            candidate.outcome = outcome;
+            candidate.responseTimeMs = outcome.responseTimeMs;
+            candidate.usage = outcome.usage;
+          } catch (error) {
+            const playgroundError = toPlaygroundError(error, candidate.spec.provider);
+            candidate.error =
+              playgroundError.kind === 'abort' ? 'stopped' : playgroundError.message;
+          } finally {
+            candidate.done = true;
+            publish();
+          }
+        }),
+      );
+
+      // Score everything that produced text; the highest score wins.
+      const scored: RaceCandidate[] = scratch.map((candidate) => ({
+        provider: candidate.spec.provider,
+        model: candidate.spec.model,
+        text: candidate.text,
+        reasoning: candidate.reasoning || undefined,
+        responseTimeMs: candidate.responseTimeMs,
+        usage: candidate.usage,
+        error: candidate.error,
+        score:
+          candidate.text.trim().length > 0
+            ? scoreResponse(candidate.text, lastUser?.content ?? '', candidate.responseTimeMs, candidate.usage).overall
+            : undefined,
+      }));
+      let winnerIndex = -1;
+      let winnerScore = -1;
+      scored.forEach((candidate, index) => {
+        if ((candidate.score ?? -1) > winnerScore) {
+          winnerScore = candidate.score ?? -1;
+          winnerIndex = index;
+        }
+      });
+
+      raceAbortRefs.current = [];
+      setRaceLive(null);
+      isStreamingRef.current = false;
+      streamingTextRef.current = '';
+      streamingReasoningRef.current = '';
+      setIsStreaming(false);
+      setStreamingConvId(null);
+      setStreamingText('');
+      setStreamingReasoning('');
+
+      if (winnerIndex < 0) {
+        // Every candidate failed (or was stopped before any text).
+        const stoppedAll = scored.every((c) => c.error === 'stopped');
+        if (!stoppedAll) {
+          const firstError = scored.find((c) => c.error && c.error !== 'stopped');
+          const summary =
+            `Race failed — all ${scored.length} model${scored.length === 1 ? '' : 's'} errored.` +
+            (firstError ? ` First error: ${firstError.error}` : '');
+          setChatError(summary);
+          toast.error(summary);
+        }
+        return;
+      }
+
+      const winner = scored[winnerIndex];
+      const quality = scoreResponse(winner.text, lastUser?.content ?? '', winner.responseTimeMs, winner.usage);
+      const message: ChatMessage = {
+        id: uid(),
+        role: 'assistant',
+        content: winner.text,
+        createdAt: Date.now(),
+        reasoning: winner.reasoning,
+        meta: {
+          provider: winner.provider,
+          model: winner.model,
+          responseTimeMs: winner.responseTimeMs,
+          usage: winner.usage,
+          quality,
+          race: { candidates: scored, activeIndex: winnerIndex },
+        },
+      };
+      updateConversationById(conversationId, (c) => ({
+        messages: [...c.messages, message],
+      }));
+      const winnerOutcome = scratch[winnerIndex].outcome;
+      if (winnerOutcome) {
+        setRawDebug({
+          request: winnerOutcome.rawRequest,
+          response: winnerOutcome.rawResponse,
+          status: winnerOutcome.status,
+          responseTimeMs: winnerOutcome.responseTimeMs,
+        });
+      }
+      const loserCount = scored.filter((c) => c.error).length;
+      toast.success(
+        `Race finished — winner: ${winner.model} (score ${quality.overall})` +
+          (loserCount > 0 ? ` · ${loserCount} candidate${loserCount === 1 ? '' : 's'} failed` : ''),
+      );
+    },
+    [updateConversationById],
+  );
+
+  const toggleRace = useCallback(() => {
+    setRaceConfig((previous) => ({ ...previous, enabled: !previous.enabled }));
+  }, [setRaceConfig]);
+
+  const toggleRaceModel = useCallback(
+    (spec: { provider: ProviderId; model: string }) => {
+      setRaceConfig((previous) => {
+        const exists = previous.models.some((m) => m.provider === spec.provider && m.model === spec.model);
+        if (exists) {
+          return { ...previous, models: previous.models.filter((m) => !(m.provider === spec.provider && m.model === spec.model)) };
+        }
+        if (previous.models.length >= MAX_RACE_MODELS) {
+          toast.error(`Race supports up to ${MAX_RACE_MODELS} models — remove one first.`);
+          return previous;
+        }
+        return { ...previous, models: [...previous.models, spec] };
+      });
+    },
+    [setRaceConfig],
+  );
+
+  const removeRaceModel = useCallback(
+    (spec: { provider: ProviderId; model: string }) => {
+      setRaceConfig((previous) => ({
+        ...previous,
+        models: previous.models.filter((m) => !(m.provider === spec.provider && m.model === spec.model)),
+      }));
+    },
+    [setRaceConfig],
+  );
+
+  /** Flip which race candidate an assistant message displays. */
+  const setActiveRaceCandidate = useCallback(
+    (messageId: string, index: number) => {
+      const conversation = activeConversationRef.current;
+      if (!conversation) return;
+      updateConversationById(conversation.id, (c) => ({
+        messages: c.messages.map((m) =>
+          m.id === messageId && m.meta?.race
+            ? { ...m, meta: { ...m.meta, race: { ...m.meta.race, activeIndex: index } } }
+            : m,
+        ),
+      }));
+    },
+    [updateConversationById],
+  );
+
+  /** Flip which liquid (refine) version an assistant message displays. */
+  const setLiquidVersion = useCallback(
+    (messageId: string, index: number) => {
+      const conversation = activeConversationRef.current;
+      if (!conversation) return;
+      updateConversationById(conversation.id, (c) => ({
+        messages: c.messages.map((m) =>
+          m.id === messageId && m.liquid
+            ? { ...m, liquid: { ...m.liquid, activeIndex: index } }
+            : m,
+        ),
+      }));
+    },
+    [updateConversationById],
+  );
+
+  /* ---------------- refine (liquid) ---------------- */
+
+  /**
+   * One-click "Refine" (G0DM0D3's liquid mode, adapted): re-asks the SAME
+   * model that wrote the answer to improve it, streaming the rewrite into the
+   * bubble. Every revision is kept as a version; v0 is always the original.
+   */
+  const refineMessage = useCallback(
+    async (messageId: string) => {
+      const conversation = activeConversationRef.current;
+      if (!conversation || isStreamingRef.current || isRefiningRef.current) return;
+      const index = conversation.messages.findIndex((m) => m.id === messageId);
+      if (index === -1) return;
+      const message = conversation.messages[index];
+      const view = resolveMessageView(message);
+      const lastUser = [...conversation.messages.slice(0, index)].reverse().find((m) => m.role === 'user');
+      if (!lastUser) {
+        toast.error('Nothing to refine against — send a question first.');
+        return;
+      }
+      // Refine with the model that PRODUCED the answer (falls back to current).
+      const provider = message.meta?.provider ?? conversation.provider;
+      const model = message.meta?.model ?? conversation.model;
+      const apiKey = settingsRef.current.apiKeys[provider];
+      if (!apiKey) {
+        toast.error(`Refine needs the ${providerLabel(provider)} key — add it in settings.`);
+        return;
+      }
+
+      // First refine seeds version 0 with the answer as originally displayed.
+      const existingVersions = message.liquid?.versions ?? [
+        {
+          content: view.content,
+          reasoning: message.reasoning,
+          score: message.meta?.quality?.overall,
+          responseTimeMs: message.meta?.responseTimeMs,
+          usage: message.meta?.usage,
+          createdAt: message.createdAt,
+        },
+      ];
+
+      isRefiningRef.current = true;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setRefiningMessageId(messageId);
+      setRefiningText('');
+
+      let text = '';
+      let reasoning = '';
+      try {
+        const adapter = getAdapter(provider);
+        const outcome = await runChatStream({
+          adapter,
+          apiKey,
+          model,
+          systemPrompt: conversation.systemPrompt,
+          history: [
+            { id: `${messageId}-q`, role: 'user', content: lastUser.content, createdAt: message.createdAt },
+            { id: `${messageId}-a`, role: 'assistant', content: view.content, createdAt: message.createdAt },
+            { id: `${messageId}-i`, role: 'user', content: REFINE_INSTRUCTION, createdAt: Date.now() },
+          ],
+          settings: conversation.settings,
+          signal: controller.signal,
+          onDelta: (delta) => {
+            text += delta;
+            setRefiningText(text);
+          },
+          onReasoning: (delta) => {
+            reasoning += delta;
+          },
+        });
+        const improved = text.trim() || view.content;
+        const quality = scoreResponse(improved, lastUser.content, outcome.responseTimeMs, outcome.usage);
+        updateConversationById(conversation.id, (c) => ({
+          messages: c.messages.map((m) =>
+            m.id === messageId
+              ? {
+                  ...m,
+                  liquid: {
+                    versions: [
+                      ...existingVersions,
+                      {
+                        content: improved,
+                        reasoning: reasoning || undefined,
+                        score: quality.overall,
+                        responseTimeMs: outcome.responseTimeMs,
+                        usage: outcome.usage,
+                        createdAt: Date.now(),
+                      },
+                    ],
+                    activeIndex: existingVersions.length, // show the new version
+                  },
+                }
+              : m,
+          ),
+        }));
+        setRawDebug({
+          request: outcome.rawRequest,
+          response: outcome.rawResponse,
+          status: outcome.status,
+          responseTimeMs: outcome.responseTimeMs,
+        });
+        toast.success(`Refined — v${existingVersions.length + 1} scored ${quality.overall}/100.`);
+      } catch (error) {
+        const playgroundError = toPlaygroundError(error, provider);
+        if (playgroundError.kind === 'abort') {
+          // Keep a meaningful partial rewrite as a version (better than losing it).
+          if (text.trim().length > 20) {
+            const quality = scoreResponse(text, lastUser.content);
+            updateConversationById(conversation.id, (c) => ({
+              messages: c.messages.map((m) =>
+                m.id === messageId
+                  ? {
+                      ...m,
+                      liquid: {
+                        versions: [
+                          ...existingVersions,
+                          {
+                            content: text.trim(),
+                            reasoning: reasoning || undefined,
+                            score: quality.overall,
+                            createdAt: Date.now(),
+                          },
+                        ],
+                        activeIndex: existingVersions.length,
+                      },
+                    }
+                  : m,
+              ),
+            }));
+            toast.info('Refine stopped — kept the partial rewrite as a version.');
+          } else {
+            toast.info('Refine cancelled.');
+          }
+        } else {
+          toast.error(`Refine failed: ${playgroundError.message}`);
+        }
+      } finally {
+        abortRef.current = null;
+        isRefiningRef.current = false;
+        setRefiningMessageId(null);
+        setRefiningText('');
+      }
+    },
+    [updateConversationById],
+  );
+
   const sendMessage = useCallback(
     async (text: string) => {
       const conversation = activeConversationRef.current;
@@ -582,13 +1106,21 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       const patch: Partial<Conversation> = { messages: history };
       if (conversation.messages.length === 0) patch.title = autoTitle(text);
       updateConversationById(conversation.id, patch);
-      await runCompletion(conversation.id, history);
+      // Race mode sends the same prompt to several models in parallel.
+      const race = raceConfigRef.current;
+      if (race.enabled && race.models.length >= 2) {
+        await runRace(conversation.id, history);
+      } else {
+        await runCompletion(conversation.id, history);
+      }
     },
-    [runCompletion, updateConversationById],
+    [runCompletion, runRace, updateConversationById],
   );
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
+    raceAbortRefs.current.forEach((controller) => controller.abort());
+    raceAbortRefs.current = [];
   }, []);
 
   const editMessage = useCallback(
@@ -629,7 +1161,10 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     }
     if (messages.length === 0) return;
     updateConversationById(conversation.id, { messages });
-    await runCompletion(conversation.id, messages);
+    // A retry should say something DIFFERENT: bump the temperature for this
+    // request only (not persisted) — G0DM0D3's escalating-retry idea, toned
+    // down for everyday use.
+    await runCompletion(conversation.id, messages, { temperatureBoost: 0.15 });
   }, [runCompletion, updateConversationById]);
 
   const dismissChatError = useCallback(() => {
@@ -904,6 +1439,17 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     chatError,
     chatErrorAction,
     dismissChatError,
+    raceConfig,
+    toggleRace,
+    toggleRaceModel,
+    removeRaceModel,
+    raceLive,
+    setActiveRaceCandidate,
+    refineMessage,
+    isRefining: refiningMessageId !== null,
+    refiningMessageId,
+    refiningText,
+    setLiquidVersion,
     settings,
     saveApiKey,
     removeApiKey,

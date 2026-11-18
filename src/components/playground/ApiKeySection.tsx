@@ -3,6 +3,8 @@
 /**
  * Provider picker + API key manager: select the active provider, save a
  * per-provider key (password field with show/hide), test it, and delete it.
+ * OpenRouter additionally gets one-click OAuth ("Login with OpenRouter", PKCE
+ * flow — inspired by G0DM0D3) so users never have to create/paste a key.
  */
 import React, { useState } from 'react';
 import {
@@ -14,10 +16,12 @@ import {
   Trash2,
   TriangleAlert,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import { usePlayground } from '@/components/playground/context';
 import { SettingsSection } from '@/components/playground/SettingsSection';
 import { listProviders } from '@/lib/providerAdapters';
+import { startOpenRouterLogin } from '@/lib/openrouterOAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -82,6 +86,19 @@ export function ApiKeySection() {
       {/* API key input */}
       <div className="space-y-1.5">
         <Label htmlFor="api-key-input">API key</Label>
+        {provider === 'openrouter' && (
+          <Button
+            type="button"
+            className="h-9 w-full gap-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-500 hover:to-fuchsia-500"
+            onClick={() => void startOpenRouterLogin()}
+            title="Redirects to openrouter.ai and returns with a key — no copy-paste needed"
+          >
+            <Zap className="h-4 w-4" /> Login with OpenRouter
+          </Button>
+        )}
+        {provider === 'openrouter' && (
+          <p className="text-center text-[10px] uppercase tracking-wider text-muted-foreground">or paste a key manually</p>
+        )}
         <div className="flex items-center gap-1.5">
           <div className="relative flex-1">
             <Input

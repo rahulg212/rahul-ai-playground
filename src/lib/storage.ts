@@ -14,6 +14,8 @@ export const STORAGE_KEYS = {
   presets: 'apiPlayground.presets',
   drafts: 'apiPlayground.drafts',
   dataVersion: 'apiPlayground.dataVersion',
+  /** Race mode config (enabled + competitor models), G0DM0D3-inspired arena. */
+  race: 'apiPlayground.race',
 } as const;
 
 /**
@@ -134,7 +136,11 @@ export function normalizeConversation(raw: Conversation): Conversation {
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: m.content ?? '',
     createdAt: m.createdAt ?? now(),
+    // Preserve the optional rich fields (dropping any of them would silently
+    // degrade persisted conversations on every reload).
+    reasoning: m.reasoning,
     meta: m.meta,
+    liquid: m.liquid,
   }));
   // Repair conversations saved before default models existed.
   if (!conv.model) conv.model = DEFAULT_MODELS[conv.provider] ?? 'gpt-4o-mini';
