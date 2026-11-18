@@ -1,0 +1,185 @@
+/**
+ * Shared TypeScript types for the API Playground.
+ *
+ * The app keeps ONE internal message format and uses "provider adapters"
+ * (see src/lib/providerAdapters) to translate to/from each provider's
+ * request/response shape.
+ */
+
+/** All providers supported by the playground. */
+export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'openrouter';
+
+/** Roles in the internal message format (system prompt is stored separately). */
+export type Role = 'user' | 'assistant';
+
+/** Token usage reported by a provider (all fields optional). */
+export interface TokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+/** Provenance info attached to assistant messages. */
+export interface AssistantMeta {
+  provider: ProviderId;
+  model: string;
+  responseTimeMs?: number;
+  usage?: TokenUsage;
+  /** Set when the response was cut short (user stop or API error). */
+  stopped?: boolean;
+  error?: string;
+}
+
+/** A single chat message in the internal format. */
+export interface ChatMessage {
+  id: string;
+  role: Role;
+  content: string;
+  createdAt: number;
+  meta?: AssistantMeta;
+}
+
+/** Sampling / generation parameters. */
+export interface GenerationSettings {
+  temperature: number;
+  maxTokens: number;
+  topP: number;
+  /** Parsed from a "one per line" textarea in the UI. */
+  stopSequences: string[];
+}
+
+/** A saved conversation. Each conversation remembers its own configuration. */
+export interface Conversation {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+  provider: ProviderId;
+  model: string;
+  systemPrompt: string;
+  settings: GenerationSettings;
+  /** 0 = send the entire history, N > 0 = only the last N messages. */
+  contextLimit: number;
+}
+
+/** A named system-prompt preset. */
+export interface Preset {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
+/** Global app settings (persisted to localStorage). */
+export interface AppSettings {
+  apiKeys: Record<ProviderId, string>;
+  showRawPanel: boolean;
+}
+
+/** A model entry returned by a provider's models endpoint. */
+export interface ModelInfo {
+  id: string;
+  label?: string;
+}
+
+/** Result of a "Test Key" call. */
+export interface TestKeyResult {
+  ok: boolean;
+  message: string;
+}
+
+/** Which generation settings a provider supports (used to disable UI inputs). */
+export interface ProviderCapabilities {
+  temperature: boolean;
+  maxTokens: boolean;
+  topP: boolean;
+  stopSequences: boolean;
+}
+
+/** Content of the toggleable Raw / debug panel. */
+export interface RawDebug {
+  request: string;
+  response: string;
+  status?: number;
+  responseTimeMs?: number;
+}
+
+/** Error classification used for clear, actionable messages. */
+export type ErrorKind =
+  | 'auth'
+  | 'rate_limit'
+  | 'not_found'
+  | 'bad_request'
+  | 'server'
+  | 'cors'
+  | 'network'
+  | 'abort'
+  | 'unknown';
+
+export class PlaygroundError extends Error {
+  status?: number;
+  kind: ErrorKind;
+  details?: string;
+  /** The masked request JSON that produced this error (for the Raw panel). */
+  rawRequest?: string;
+
+  constructor(message: string, kind: ErrorKind = 'unknown', status?: number, details?: string) {
+    super(message);
+    this.name = 'PlaygroundError';
+    this.kind = kind;
+    if (status !== undefined) this.status = status;
+    if (details !== undefined) this.details = details;
+  }
+}
+
+/** Arguments passed to an adapter to build a chat request. */
+export interface BuildChatRequestArgs {
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  /** Already context-limited user/assistant history (no system message). */
+  history: ChatMessage[];
+  settings: GenerationSettings;
+}
+
+/** The exact request an adapter produces for its provider. */
+export interface BuiltRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
+/** Outcome of a completed streaming chat request. */
+export interface StreamOutcome {
+  text: string;
+  usage?: TokenUsage;
+  responseTimeMs: number;
+  /** Pretty-printed request JSON with the API key masked. */
+  rawRequest: string;
+  /** Concatenated raw response chunks (pretty JSON, newline separated). */
+  rawResponse: string;
+  status: number;
+}
+
+/**
+ * The adapter contract. One implementation per provider; see
+ * src/lib/providerAdapters for concrete implementations and comments.
+ */
+export interface ProviderAdapter {
+  id: ProviderId;
+  label: string;
+  defaultModel: string;
+  capabilities: ProviderCapabilities;
+  /** Fetch the list of models using the saved key. */
+  fetchModels(apiKey: string): Promise<ModelInfo[]>;
+  /** Quick key validation against a cheap endpoint. */
+  testKey(apiKey: string): Promise<TestKeyResult>;
+  /** Translate internal format into this provider's HTTP request. */
+  buildChatRequest(args: BuildChatRequestArgs): BuiltRequest;
+  /** Pull the text delta out of one streamed JSON payload (or null). */
+  extractDelta(json: unknown): string | null;
+  /** Pull partial token usage out of one streamed JSON payload (or null). */
+  extractUsage(json: unknown): Partial<TokenUsage> | null;
+  /** Optional: return true when this SSE payload ends the stream. */
+  isFinalPayload?(payload: string): boolean;
+}
