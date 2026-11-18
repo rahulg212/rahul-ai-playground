@@ -9,7 +9,9 @@ import React, { useState } from 'react';
 import {
   AlertTriangle,
   Bot,
+  Brain,
   Check,
+  ChevronDown,
   Copy,
   Pencil,
   RefreshCw,
@@ -38,6 +40,48 @@ async function copyText(text: string): Promise<void> {
   } catch {
     toast.error('Could not copy — clipboard unavailable.');
   }
+}
+
+/**
+ * Collapsible "thinking" block for reasoning models: while the model streams
+ * its chain-of-thought (and no answer text has arrived yet) the block is open
+ * automatically; afterwards it collapses to a one-line toggle.
+ */
+function ThinkingBlock({
+  reasoning,
+  streaming,
+  hasContent,
+}: {
+  reasoning: string;
+  streaming: boolean;
+  hasContent: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const autoOpen = streaming && !hasContent;
+  const shown = autoOpen || open;
+
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg border border-dashed bg-muted/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        aria-expanded={shown}
+      >
+        <Brain className={cn('h-3.5 w-3.5 shrink-0', autoOpen && 'animate-pulse')} />
+        <span>{autoOpen ? 'Thinking…' : 'Thought process'}</span>
+        <ChevronDown className={cn('ml-auto h-3 w-3 shrink-0 transition-transform', shown && 'rotate-180')} />
+      </button>
+      {shown && (
+        <div
+          className="scrollbar-thin max-h-48 overflow-y-auto whitespace-pre-wrap border-t px-2.5 py-2 text-xs leading-relaxed text-muted-foreground"
+          aria-label="Model thinking process"
+        >
+          {reasoning}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface MessageBubbleProps {
@@ -124,6 +168,13 @@ export function MessageBubble({ message, isLast, streaming = false }: MessageBub
               <p className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
             ) : (
               <>
+                {message.reasoning && (
+                  <ThinkingBlock
+                    reasoning={message.reasoning}
+                    streaming={streaming}
+                    hasContent={message.content.length > 0}
+                  />
+                )}
                 <MarkdownRenderer content={message.content} />
                 {streaming && (
                   <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-foreground/70 align-text-bottom" />
@@ -153,7 +204,7 @@ export function MessageBubble({ message, isLast, streaming = false }: MessageBub
         )}
 
         {/* Streaming indicator */}
-        {streaming && !message.content && (
+        {streaming && !message.content && !message.reasoning && (
           <div className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
             <Zap className="h-3 w-3 animate-pulse" /> waiting for first token…
           </div>

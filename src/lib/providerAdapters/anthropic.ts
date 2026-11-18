@@ -33,7 +33,7 @@ const PROVIDER: ProviderId = 'anthropic';
 /** Shape of one streamed Messages-API event (only what we need). */
 interface AnthropicEvent {
   type?: string;
-  delta?: { type?: string; text?: string };
+  delta?: { type?: string; text?: string; thinking?: string };
   message?: { usage?: { input_tokens?: number } };
   usage?: { input_tokens?: number; output_tokens?: number };
 }
@@ -81,6 +81,19 @@ function extractDelta(json: unknown): string | null {
   return null;
 }
 
+/**
+ * Extended-thinking models stream their chain-of-thought as separate
+ * `thinking_delta` blocks before the answer text.
+ */
+function extractReasoningDelta(json: unknown): string | null {
+  const event = json as AnthropicEvent;
+  if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+    const thinking = event.delta.thinking;
+    return typeof thinking === 'string' && thinking.length > 0 ? thinking : null;
+  }
+  return null;
+}
+
 function extractUsage(json: unknown): Partial<TokenUsage> | null {
   const event = json as AnthropicEvent;
   if (event.type === 'message_start' && event.message?.usage?.input_tokens !== undefined) {
@@ -122,6 +135,7 @@ export const anthropicAdapter: ProviderAdapter = {
   testKey,
   buildChatRequest,
   extractDelta,
+  extractReasoningDelta,
   extractUsage,
   isFinalPayload,
 };

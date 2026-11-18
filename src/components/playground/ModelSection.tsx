@@ -5,7 +5,7 @@
  * endpoint, plus free-text entry for custom model IDs.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Check, ChevronDown, Loader2, RefreshCw, Search, XCircle } from 'lucide-react';
+import { Boxes, Check, ChevronDown, Loader2, RefreshCw, Search, XCircle, Zap } from 'lucide-react';
 import { usePlayground } from '@/components/playground/context';
 import { SettingsSection } from '@/components/playground/SettingsSection';
 import { getAdapter } from '@/lib/providerAdapters';
@@ -13,6 +13,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+
+/** OpenRouter marks free-to-use models with a ":free" id suffix. */
+function isFreeModel(id: string): boolean {
+  return id.endsWith(':free');
+}
 
 export function ModelSection() {
   const {
@@ -29,7 +34,16 @@ export function ModelSection() {
   const state = models[provider];
 
   const [open, setOpen] = useState(false);
+  const [freeOnly, setFreeOnly] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Reset the free filter when switching providers (it is an OpenRouter concept).
+  // Adjust-state-during-render pattern (avoids a cascading-render effect).
+  const [prevProvider, setPrevProvider] = useState(provider);
+  if (prevProvider !== provider) {
+    setPrevProvider(provider);
+    setFreeOnly(false);
+  }
 
   // Close the dropdown when clicking outside.
   useEffect(() => {
@@ -49,13 +63,20 @@ export function ModelSection() {
     }
   }, [provider, settings.apiKeys[provider], loadModels]);
 
+  const hasFreeModels = useMemo(
+    () => state.models.some((m) => isFreeModel(m.id)),
+    [state.models],
+  );
+
   const filtered = useMemo(() => {
     const q = model.trim().toLowerCase();
-    if (!q) return state.models;
-    return state.models.filter(
+    let list = state.models;
+    if (freeOnly) list = list.filter((m) => isFreeModel(m.id));
+    if (!q) return list;
+    return list.filter(
       (m) => m.id.toLowerCase().includes(q) || (m.label ?? '').toLowerCase().includes(q),
     );
-  }, [state.models, model]);
+  }, [state.models, model, freeOnly]);
 
   const commit = (value: string) => {
     setModel(value.trim());
@@ -98,7 +119,9 @@ export function ModelSection() {
             <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border bg-popover shadow-lg">
               <div className="flex items-center gap-2 border-b px-2.5 py-1.5 text-xs text-muted-foreground">
                 <Search className="h-3 w-3" />
-                {state.loading ? 'Loading models…' : `${filtered.length} of ${state.models.length} models`}
+                {state.loading
+                  ? 'Loading models…'
+                  : `${filtered.length} of ${freeOnly ? state.models.filter((m) => isFreeModel(m.id)).length : state.models.length} models`}
               </div>
               <div className="scrollbar-thin max-h-56 overflow-y-auto">
                 {state.loading ? (
@@ -130,7 +153,14 @@ export function ModelSection() {
                         >
                           {m.id === model && <Check className="mt-0.5 h-3 w-3 shrink-0 text-primary" />}
                           <span className="min-w-0 flex-1">
-                            <span className="block break-all font-mono">{m.id}</span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="break-all font-mono">{m.id}</span>
+                              {isFreeModel(m.id) && (
+                                <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 px-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                                  <Zap className="h-2.5 w-2.5" /> Free
+                                </span>
+                              )}
+                            </span>
                             {m.label && m.label !== m.id && (
                               <span className="block truncate text-[11px] text-muted-foreground">{m.label}</span>
                             )}
@@ -145,20 +175,35 @@ export function ModelSection() {
           )}
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             Type to filter, or enter any custom model ID.
           </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={() => void loadModels(provider, true)}
-            disabled={state.loading}
-          >
-            <RefreshCw className={cn('h-3 w-3', state.loading && 'animate-spin')} />
-            Refresh
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {hasFreeModels && (
+              <Button
+                variant={freeOnly ? 'default' : 'ghost'}
+                size="sm"
+                className={cn('h-7 gap-1.5 text-xs', !freeOnly && 'text-muted-foreground')}
+                onClick={() => setFreeOnly((v) => !v)}
+                aria-pressed={freeOnly}
+                title="Show only free-to-use models (IDs ending in ':free')"
+              >
+                <Zap className="h-3 w-3" />
+                Free only
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => void loadModels(provider, true)}
+              disabled={state.loading}
+            >
+              <RefreshCw className={cn('h-3 w-3', state.loading && 'animate-spin')} />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
     </SettingsSection>

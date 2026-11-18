@@ -1,0 +1,797 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→/**
+     4→     4→ * PlaygroundProvider — the single source of truth for the whole app.
+     5→     5→ *
+     6→     6→ * It owns:
+     7→     7→ *   - conversations (persisted), the active conversation and its config
+     8→     8→ *   - global settings incl. API keys (persisted)
+     9→     9→ *   - system-prompt presets (persisted)
+    10→    10→ *   - streaming state + abort handling
+    11→    11→ *   - fetched model lists, key test results (in-memory)
+    12→    12→ *   - UI layout state (panel toggles, mobile drawers)
+    13→    13→ *
+    14→    14→ * Components consume everything through usePlayground().
+    15→    15→ */
+    16→    16→import React, {
+    17→    17→  createContext,
+    18→    18→  useCallback,
+    19→    19→  useContext,
+    20→    20→  useEffect,
+    21→    21→  useMemo,
+    22→    22→  useRef,
+    23→    23→  useState,
+    24→    24→} from 'react';
+    25→    25→import { toast } from 'sonner';
+    26→    26→import { useLocalStorage } from '@/hooks/useLocalStorage';
+    27→    27→import { providerLabel, toPlaygroundError } from '@/lib/errors';
+    28→    28→import {
+    29→    29→  exportAllData,
+    30→    30→  exportConversationAsJson,
+    31→    31→  exportConversationAsMarkdown,
+    32→    32→  parseFullBackup,
+    33→    33→  parseImportedConversation,
+    34→    34→} from '@/lib/exportUtils';
+    35→    35→import { getAdapter } from '@/lib/providerAdapters';
+    36→    36→import { runChatStream } from '@/lib/streaming';
+    37→    37→import {
+    38→    38→  STORAGE_KEYS,
+    39→    39→  createConversation,
+    40→    40→  defaultGenerationSettings,
+    41→    41→  defaultSettings,
+    42→    42→  loadConversations,
+    43→    43→  loadPresets,
+    44→    44→  loadSettings,
+    45→    45→  uid,
+    46→    46→} from '@/lib/storage';
+    47→    47→import {
+    48→    48→  applyContextLimit,
+    49→    49→  autoTitle,
+    50→    50→  estimateConversationTokens,
+    51→    51→} from '@/lib/tokens';
+    52→    52→import type {
+    53→    53→  AppSettings,
+    54→    54→  AssistantMeta,
+    55→    55→  ChatMessage,
+    56→    56→  Conversation,
+    57→    57→  GenerationSettings,
+    58→    58→  ModelInfo,
+    59→    59→  Preset,
+    60→    60→  ProviderId,
+    61→    61→  RawDebug,
+    62→    62→  TestKeyResult,
+    63→    63→} from '@/lib/types';
+    64→    64→
+    65→    65→export interface ModelsState {
+    66→    66→  loading: boolean;
+    67→    67→  error: string | null;
+    68→    68→  models: ModelInfo[];
+    69→    69→}
+    70→    70→
+    71→    71→const EMPTY_MODELS: Record<ProviderId, ModelsState> = {
+    72→    72→  openai: { loading: false, error: null, models: [] },
+    73→    73→  anthropic: { loading: false, error: null, models: [] },
+    74→    74→  gemini: { loading: false, error: null, models: [] },
+    75→    75→  openrouter: { loading: false, error: null, models: [] },
+    76→    76→};
+    77→    77→
+    78→    78→export interface PlaygroundContextValue {
+    79→    79→  /** True once the active conversation exists (localStorage loaded synchronously). */
+    80→    80→  ready: boolean;
+    81→    81→
+    82→    82→  // Conversations
+    83→    83→  conversations: Conversation[];
+    84→    84→  activeConversation: Conversation | null;
+    85→    85→  selectConversation: (id: string) => void;
+    86→    86→  createNewChat: () => void;
+    87→    87→  deleteConversation: (id: string) => void;
+    88→    88→  renameConversation: (id: string, title: string) => void;
+    89→    89→  clearActiveChat: () => void;
+    90→    90→
+    91→    91→  // Active conversation configuration
+    92→    92→  setProvider: (provider: ProviderId) => void;
+    93→    93→  setModel: (model: string) => void;
+    94→    94→  setSystemPrompt: (prompt: string) => void;
+    95→    95→  setGenerationSettings: (patch: Partial<GenerationSettings>) => void;
+    96→    96→  resetGenerationSettings: () => void;
+    97→    97→  setContextLimit: (limit: number) => void;
+    98→    98→
+    99→    99→  // Messaging
+   100→   100→  sendMessage: (text: string) => Promise<void>;
+   101→   101→  stopStreaming: () => void;
+   102→   102→  isStreaming: boolean;
+   103→   103→  streamingConvId: string | null;
+   104→   104→  streamingText: string;
+   105→   105→  editMessage: (messageId: string, newContent: string) => Promise<void>;
+   106→   106→  deleteMessage: (messageId: string) => void;
+   107→   107→  regenerate: () => Promise<void>;
+   108→   108→  chatError: string | null;
+   109→   109→  dismissChatError: () => void;
+   110→   110→
+   111→   111→  // API keys
+   112→   112→  settings: AppSettings;
+   113→   113→  saveApiKey: (provider: ProviderId, key: string) => void;
+   114→   114→  removeApiKey: (provider: ProviderId) => void;
+   115→   115→  testApiKey: (provider: ProviderId) => Promise<void>;
+   116→   116→  testingKey: ProviderId | null;
+   117→   117→  keyTestResults: Partial<Record<ProviderId, TestKeyResult>>;
+   118→   118→
+   119→   119→  // Models
+   120→   120→  models: Record<ProviderId, ModelsState>;
+   121→   121→  loadModels: (provider: ProviderId, force?: boolean) => Promise<void>;
+   122→   122→
+   123→   123→  // Presets
+   124→   124→  presets: Preset[];
+   125→   125→  savePreset: (name: string, prompt: string) => void;
+   126→   126→  applyPreset: (id: string) => void;
+   127→   127→  renamePreset: (id: string, name: string) => void;
+   128→   128→  deletePreset: (id: string) => void;
+   129→   129→
+   130→   130→  // Debug
+   131→   131→  showRawPanel: boolean;
+   132→   132→  setShowRawPanel: (value: boolean) => void;
+   133→   133→  rawDebug: RawDebug | null;
+   134→   134→
+   135→   135→  // UI layout
+   136→   136→  sidebarOpen: boolean;
+   137→   137→  toggleSidebar: () => void;
+   138→   138→  settingsOpen: boolean;
+   139→   139→  toggleSettings: () => void;
+   140→   140→  mobileDrawer: 'sidebar' | 'settings' | null;
+   141→   141→  setMobileDrawer: (drawer: 'sidebar' | 'settings' | null) => void;
+   142→   142→
+   143→   143→  // Derived helpers
+   144→   144→  nextRequestTokens: number;
+   145→   145→
+   146→   146→  // Import / export
+   147→   147→  exportConversation: (format: 'json' | 'md') => void;
+   148→   148→  importConversation: (file: File) => Promise<void>;
+   149→   149→  exportAll: (includeKeys: boolean) => void;
+   150→   150→  importAll: (file: File) => Promise<void>;
+   151→   151→}
+   152→   152→
+   153→   153→const PlaygroundContext = createContext<PlaygroundContextValue | null>(null);
+   154→   154→
+   155→   155→export function usePlayground(): PlaygroundContextValue {
+   156→   156→  const context = useContext(PlaygroundContext);
+   157→   157→  if (!context) {
+   158→   158→    throw new Error('usePlayground must be used within a PlaygroundProvider');
+   159→   159→  }
+   160→   160→  return context;
+   161→   161→}
+   162→   162→
+   163→   163→export function PlaygroundProvider({ children }: { children: React.ReactNode }) {
+   164→   164→  /* ---------------- persisted state ---------------- */
+   165→   165→  const {
+   166→   166→    value: conversations,
+   167→   167→    setValue: setConversations,
+   168→   168→  } = useLocalStorage<Conversation[]>(STORAGE_KEYS.conversations, [], loadConversations);
+   169→   169→  const { value: activeId, setValue: setActiveId } = useLocalStorage<string | null>(
+   170→   170→    STORAGE_KEYS.activeConversationId,
+   171→   171→    null,
+   172→   172→  );
+   173→   173→  const { value: settings, setValue: setSettings } = useLocalStorage<AppSettings>(
+   174→   174→    STORAGE_KEYS.settings,
+   175→   175→    defaultSettings(),
+   176→   176→    loadSettings,
+   177→   177→  );
+   178→   178→  const { value: presets, setValue: setPresets } = useLocalStorage<Preset[]>(
+   179→   179→    STORAGE_KEYS.presets,
+   180→   180→    [],
+   181→   181→    loadPresets,
+   182→   182→  );
+   183→   183→
+   184→   184→  /* ---------------- in-memory state ---------------- */
+   185→   185→  const [isStreaming, setIsStreaming] = useState(false);
+   186→   186→  const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
+   187→   187→  const [streamingText, setStreamingText] = useState('');
+   188→   188→  const [chatError, setChatError] = useState<string | null>(null);
+   189→   189→  const [rawDebug, setRawDebug] = useState<RawDebug | null>(null);
+   190→   190→  const [testingKey, setTestingKey] = useState<ProviderId | null>(null);
+   191→   191→  const [keyTestResults, setKeyTestResults] = useState<Partial<Record<ProviderId, TestKeyResult>>>({});
+   192→   192→  const [models, setModels] = useState<Record<ProviderId, ModelsState>>(EMPTY_MODELS);
+   193→   193→  const [sidebarOpen, setSidebarOpen] = useState(true);
+   194→   194→  const [settingsOpen, setSettingsOpen] = useState(true);
+   195→   195→  const [mobileDrawer, setMobileDrawer] = useState<'sidebar' | 'settings' | null>(null);
+   196→   196→
+   197→   197→  /* ---------------- refs for async flows ---------------- */
+   198→   198→  const conversationsRef = useRef(conversations);
+   199→   199→  const settingsRef = useRef(settings);
+   200→   200→  const presetsRef = useRef(presets);
+   201→   201→  const activeIdRef = useRef(activeId);
+   202→   202→  const modelsRef = useRef(models);
+   203→   203→  const abortRef = useRef<AbortController | null>(null);
+   204→   204→  const streamingTextRef = useRef('');
+   205→   205→  const isStreamingRef = useRef(false);
+   206→   206→
+   207→   207→  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+   208→   208→  useEffect(() => { settingsRef.current = settings; }, [settings]);
+   209→   209→  useEffect(() => { presetsRef.current = presets; }, [presets]);
+   210→   210→  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
+   211→   211→
+   212→   212→  const activeConversation = useMemo(() => {
+   213→   213→    if (conversations.length === 0) return null;
+   214→   214→    return conversations.find((c) => c.id === activeId) ?? conversations[0];
+   215→   215→  }, [conversations, activeId]);
+   216→   216→
+   217→   217→  const activeConversationRef = useRef(activeConversation);
+   218→   218→  useEffect(() => { activeConversationRef.current = activeConversation; }, [activeConversation]);
+   219→   219→
+   220→   220→  // Ensure there is always at least one conversation. Values load
+   221→   221→  // synchronously from localStorage, so an empty list means a fresh browser.
+   222→   222→  useEffect(() => {
+   223→   223→    if (conversations.length === 0) {
+   224→   224→      const fresh = createConversation();
+   225→   225→      setConversations([fresh]);
+   226→   226→      setActiveId(fresh.id);
+   227→   227→    } else if (!conversations.some((c) => c.id === activeId)) {
+   228→   228→      setActiveId(conversations[0].id);
+   229→   229→    }
+   230→   230→  }, [conversations, activeId, setConversations, setActiveId]);
+   231→   231→
+   232→   232→  const ready = activeConversation !== null;
+   233→   233→
+   234→   234→  /* ---------------- conversation mutations ---------------- */
+   235→   235→
+   236→   236→  const updateConversationById = useCallback(
+   237→   237→    (
+   238→   238→      id: string,
+   239→   239→      patch: Partial<Conversation> | ((conversation: Conversation) => Partial<Conversation>),
+   240→   240→    ) => {
+   241→   241→      setConversations((previous) =>
+   242→   242→        previous.map((conversation) =>
+   243→   243→          conversation.id === id
+   244→   244→            ? {
+   245→   245→                ...conversation,
+   246→   246→                ...(typeof patch === 'function' ? patch(conversation) : patch),
+   247→   247→                updatedAt: Date.now(),
+   248→   248→              }
+   249→   249→            : conversation,
+   250→   250→        ),
+   251→   251→      );
+   252→   252→    },
+   253→   253→    [setConversations],
+   254→   254→  );
+   255→   255→
+   256→   256→  const updateActive = useCallback(
+   257→   257→    (patch: Partial<Conversation>) => {
+   258→   258→      const id = activeConversationRef.current?.id;
+   259→   259→      if (id) updateConversationById(id, patch);
+   260→   260→    },
+   261→   261→    [updateConversationById],
+   262→   262→  );
+   263→   263→
+   264→   264→  const selectConversation = useCallback((id: string) => {
+   265→   265→    setActiveId(id);
+   266→   266→    setMobileDrawer(null);
+   267→   267→  }, [setActiveId]);
+   268→   268→
+   269→   269→  const createNewChat = useCallback(() => {
+   270→   270→    // New chats inherit the current provider/model/prompt/settings so the
+   271→   271→    // user keeps testing without reconfiguration.
+   272→   272→    const current = activeConversationRef.current;
+   273→   273→    const fresh = createConversation(
+   274→   274→      current?.provider ?? 'openai',
+   275→   275→      current?.model,
+   276→   276→      {
+   277→   277→        systemPrompt: current?.systemPrompt ?? '',
+   278→   278→        settings: current?.settings,
+   279→   279→      },
+   280→   280→    );
+   281→   281→    setConversations((previous) => [fresh, ...previous]);
+   282→   282→    setActiveId(fresh.id);
+   283→   283→    setMobileDrawer(null);
+   284→   284→    setChatError(null);
+   285→   285→  }, [setConversations, setActiveId]);
+   286→   286→
+   287→   287→  const deleteConversation = useCallback(
+   288→   288→    (id: string) => {
+   289→   289→      const previous = conversationsRef.current;
+   290→   290→      const remaining = previous.filter((c) => c.id !== id);
+   291→   291→      if (remaining.length === 0) {
+   292→   292→        const fresh = createConversation();
+   293→   293→        setConversations([fresh]);
+   294→   294→        setActiveId(fresh.id);
+   295→   295→      } else {
+   296→   296→        setConversations(remaining);
+   297→   297→        if (id === activeIdRef.current) setActiveId(remaining[0].id);
+   298→   298→      }
+   299→   299→      toast.success('Conversation deleted.');
+   300→   300→    },
+   301→   301→    [setConversations, setActiveId],
+   302→   302→  );
+   303→   303→
+   304→   304→  const renameConversation = useCallback(
+   305→   305→    (id: string, title: string) => {
+   306→   306→      updateConversationById(id, { title: title.trim() || 'Untitled' });
+   307→   307→    },
+   308→   308→    [updateConversationById],
+   309→   309→  );
+   310→   310→
+   311→   311→  const clearActiveChat = useCallback(() => {
+   312→   312→    updateActive({ messages: [] });
+   313→   313→    setChatError(null);
+   314→   314→    toast.success('Chat cleared.');
+   315→   315→  }, [updateActive]);
+   316→   316→
+   317→   317→  /* ---------------- active conversation config ---------------- */
+   318→   318→
+   319→   319→  const setProvider = useCallback(
+   320→   320→    (provider: ProviderId) => {
+   321→   321→      // Switching provider keeps the chat but resets the model to a sensible
+   322→   322→      // default (models differ across providers).
+   323→   323→      updateActive({ provider, model: getAdapter(provider).defaultModel });
+   324→   324→    },
+   325→   325→    [updateActive],
+   326→   326→  );
+   327→   327→
+   328→   328→  const setModel = useCallback((model: string) => updateActive({ model }), [updateActive]);
+   329→   329→
+   330→   330→  const setSystemPrompt = useCallback(
+   331→   331→    (prompt: string) => updateActive({ systemPrompt: prompt }),
+   332→   332→    [updateActive],
+   333→   333→  );
+   334→   334→
+   335→   335→  const setGenerationSettings = useCallback(
+   336→   336→    (patch: Partial<GenerationSettings>) => {
+   337→   337→      updateActive((conversation) => ({
+   338→   338→        settings: { ...conversation.settings, ...patch },
+   339→   339→      }));
+   340→   340→    },
+   341→   341→    [updateActive],
+   342→   342→  );
+   343→   343→
+   344→   344→  const resetGenerationSettings = useCallback(() => {
+   345→   345→    updateActive({ settings: defaultGenerationSettings() });
+   346→   346→    toast.success('Generation settings reset to defaults.');
+   347→   347→  }, [updateActive]);
+   348→   348→
+   349→   349→  const setContextLimit = useCallback((limit: number) => updateActive({ contextLimit: limit }), [updateActive]);
+   350→   350→
+   351→   351→  /* ---------------- streaming ---------------- */
+   352→   352→
+   353→   353→  const runCompletion = useCallback(
+   354→   354→    async (conversationId: string, history: ChatMessage[]) => {
+   355→   355→      const conversation = conversationsRef.current.find((c) => c.id === conversationId);
+   356→   356→      if (!conversation || history.length === 0) return;
+   357→   357→
+   358→   358→      const adapter = getAdapter(conversation.provider);
+   359→   359→      const apiKey = settingsRef.current.apiKeys[conversation.provider];
+   360→   360→      if (!apiKey) {
+   361→   361→        setChatError(
+   362→   362→          `No API key saved for ${providerLabel(conversation.provider)}. ` +
+   363→   363→            'Open the settings panel on the right, paste your key and press Save.',
+   364→   364→        );
+   365→   365→        return;
+   366→   366→      }
+   367→   367→
+   368→   368→      const limited = applyContextLimit(history, conversation.contextLimit);
+   369→   369→
+   370→   370→      const controller = new AbortController();
+   371→   371→      abortRef.current = controller;
+   372→   372→      isStreamingRef.current = true;
+   373→   373→      streamingTextRef.current = '';
+   374→   374→      setStreamingText('');
+   375→   375→      setStreamingConvId(conversationId);
+   376→   376→      setIsStreaming(true);
+   377→   377→      setChatError(null);
+   378→   378→      setRawDebug(null);
+   379→   379→
+   380→   380→      const appendAssistant = (content: string, extra?: Partial<AssistantMeta>) => {
+   381→   381→        const message: ChatMessage = {
+   382→   382→          id: uid(),
+   383→   383→          role: 'assistant',
+   384→   384→          content,
+   385→   385→          createdAt: Date.now(),
+   386→   386→          meta: {
+   387→   387→            provider: conversation.provider,
+   388→   388→            model: conversation.model,
+   389→   389→            ...extra,
+   390→   390→          },
+   391→   391→        };
+   392→   392→        updateConversationById(conversationId, (c) => ({
+   393→   393→          messages: [...c.messages, message],
+   394→   394→        }));
+   395→   395→      };
+   396→   396→
+   397→   397→      try {
+   398→   398→        // The adapter turns our internal format into the provider request and
+   399→   399→        // parses the streamed response back — see src/lib/providerAdapters.
+   400→   400→        const outcome = await runChatStream({
+   401→   401→          adapter,
+   402→   402→          apiKey,
+   403→   403→          model: conversation.model || adapter.defaultModel,
+   404→   404→          systemPrompt: conversation.systemPrompt,
+   405→   405→          history: limited,
+   406→   406→          settings: conversation.settings,
+   407→   407→          signal: controller.signal,
+   408→   408→          onDelta: (delta) => {
+   409→   409→            streamingTextRef.current += delta;
+   410→   410→            setStreamingText(streamingTextRef.current);
+   411→   411→          },
+   412→   412→        });
+   413→   413→        appendAssistant(outcome.text || '*(empty response)*', {
+   414→   414→          responseTimeMs: outcome.responseTimeMs,
+   415→   415→          usage: outcome.usage,
+   416→   416→        });
+   417→   417→        setRawDebug({
+   418→   418→          request: outcome.rawRequest,
+   419→   419→          response: outcome.rawResponse,
+   420→   420→          status: outcome.status,
+   421→   421→          responseTimeMs: outcome.responseTimeMs,
+   422→   422→        });
+   423→   423→      } catch (error) {
+   424→   424→        const playgroundError = toPlaygroundError(error);
+   425→   425→        const partial = streamingTextRef.current;
+   426→   426→        if (playgroundError.kind === 'abort') {
+   427→   427→          // "Stop" pressed: keep whatever text already arrived.
+   428→   428→          if (partial) {
+   429→   429→            appendAssistant(partial, { stopped: true });
+   430→   430→          }
+   431→   431→          toast.info('Generation stopped.');
+   432→   432→        } else {
+   433→   433→          if (partial) {
+   434→   434→            appendAssistant(partial, { stopped: true, error: playgroundError.message });
+   435→   435→          }
+   436→   436→          setChatError(playgroundError.message);
+   437→   437→          toast.error(playgroundError.message);
+   438→   438→          // Even failed attempts are useful in the Raw panel.
+   439→   439→          if (playgroundError.rawRequest) {
+   440→   440→            setRawDebug({
+   441→   441→              request: playgroundError.rawRequest,
+   442→   442→              response: `// Error: ${playgroundError.message}`,
+   443→   443→              status: playgroundError.status,
+   444→   444→            });
+   445→   445→          }
+   446→   446→        }
+   447→   447→      } finally {
+   448→   448→        abortRef.current = null;
+   449→   449→        isStreamingRef.current = false;
+   450→   450→        streamingTextRef.current = '';
+   451→   451→        setIsStreaming(false);
+   452→   452→        setStreamingConvId(null);
+   453→   453→        setStreamingText('');
+   454→   454→      }
+   455→   455→    },
+   456→   456→    [updateConversationById],
+   457→   457→  );
+   458→   458→
+   459→   459→  const sendMessage = useCallback(
+   460→   460→    async (text: string) => {
+   461→   461→      const conversation = activeConversationRef.current;
+   462→   462→      if (!conversation || isStreamingRef.current) return;
+   463→   463→      const userMessage: ChatMessage = {
+   464→   464→        id: uid(),
+   465→   465→        role: 'user',
+   466→   466→        content: text,
+   467→   467→        createdAt: Date.now(),
+   468→   468→      };
+   469→   469→      const history = [...conversation.messages, userMessage];
+   470→   470→      // Auto-title the conversation from its first user message.
+   471→   471→      const patch: Partial<Conversation> = { messages: history };
+   472→   472→      if (conversation.messages.length === 0) patch.title = autoTitle(text);
+   473→   473→      updateConversationById(conversation.id, patch);
+   474→   474→      await runCompletion(conversation.id, history);
+   475→   475→    },
+   476→   476→    [runCompletion, updateConversationById],
+   477→   477→  );
+   478→   478→
+   479→   479→  const stopStreaming = useCallback(() => {
+   480→   480→    abortRef.current?.abort();
+   481→   481→  }, []);
+   482→   482→
+   483→   483→  const editMessage = useCallback(
+   484→   484→    async (messageId: string, newContent: string) => {
+   485→   485→      const conversation = activeConversationRef.current;
+   486→   486→      if (!conversation || isStreamingRef.current) return;
+   487→   487→      const index = conversation.messages.findIndex((m) => m.id === messageId);
+   488→   488→      if (index === -1) return;
+   489→   489→      // Editing a message truncates everything after it, then re-asks the model.
+   490→   490→      const history: ChatMessage[] = [
+   491→   491→        ...conversation.messages.slice(0, index),
+   492→   492→        { ...conversation.messages[index], content: newContent },
+   493→   493→      ];
+   494→   494→      updateConversationById(conversation.id, { messages: history });
+   495→   495→      await runCompletion(conversation.id, history);
+   496→   496→    },
+   497→   497→    [runCompletion, updateConversationById],
+   498→   498→  );
+   499→   499→
+   500→   500→  const deleteMessage = useCallback(
+   501→   501→    (messageId: string) => {
+   502→   502→      const conversation = activeConversationRef.current;
+   503→   503→      if (!conversation) return;
+   504→   504→      updateConversationById(conversation.id, (c) => ({
+   505→   505→        messages: c.messages.filter((m) => m.id !== messageId),
+   506→   506→      }));
+   507→   507→    },
+   508→   508→    [updateConversationById],
+   509→   509→  );
+   510→   510→
+   511→   511→  const regenerate = useCallback(async () => {
+   512→   512→    const conversation = activeConversationRef.current;
+   513→   513→    if (!conversation || isStreamingRef.current) return;
+   514→   514→    // Drop trailing assistant message(s) and ask again.
+   515→   515→    let messages = conversation.messages;
+   516→   516→    while (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+   517→   517→      messages = messages.slice(0, -1);
+   518→   518→    }
+   519→   519→    if (messages.length === 0) return;
+   520→   520→    updateConversationById(conversation.id, { messages });
+   521→   521→    await runCompletion(conversation.id, messages);
+   522→   522→  }, [runCompletion, updateConversationById]);
+   523→   523→
+   524→   524→  const dismissChatError = useCallback(() => setChatError(null), []);
+   525→   525→
+   526→   526→  /* ---------------- API keys ---------------- */
+   527→   527→
+   528→   528→  const saveApiKey = useCallback(
+   529→   529→    (provider: ProviderId, key: string) => {
+   530→   530→      setSettings((previous) => ({
+   531→   531→        ...previous,
+   532→   532→        apiKeys: { ...previous.apiKeys, [provider]: key },
+   533→   533→      }));
+   534→   534→      toast.success(`${providerLabel(provider)} API key saved.`);
+   535→   535→    },
+   536→   536→    [setSettings],
+   537→   537→  );
+   538→   538→
+   539→   539→  const removeApiKey = useCallback(
+   540→   540→    (provider: ProviderId) => {
+   541→   541→      setSettings((previous) => ({
+   542→   542→        ...previous,
+   543→   543→        apiKeys: { ...previous.apiKeys, [provider]: '' },
+   544→   544→      }));
+   545→   545→      setKeyTestResults((previous) => ({ ...previous, [provider]: undefined }));
+   546→   546→      toast.success(`${providerLabel(provider)} API key removed.`);
+   547→   547→    },
+   548→   548→    [setSettings],
+   549→   549→  );
+   550→   550→
+   551→   551→  const testApiKey = useCallback(async (provider: ProviderId) => {
+   552→   552→    const key = settingsRef.current.apiKeys[provider];
+   553→   553→    if (!key) {
+   554→   554→      setKeyTestResults((previous) => ({
+   555→   555→        ...previous,
+   556→   556→        [provider]: { ok: false, message: 'No key entered — type one first.' },
+   557→   557→      }));
+   558→   558→      return;
+   559→   559→    }
+   560→   560→    setTestingKey(provider);
+   561→   561→    try {
+   562→   562→      const result = await getAdapter(provider).testKey(key);
+   563→   563→      setKeyTestResults((previous) => ({ ...previous, [provider]: result }));
+   564→   564→      if (result.ok) toast.success(result.message);
+   565→   565→      else toast.error(result.message);
+   566→   566→    } catch (error) {
+   567→   567→      const playgroundError = toPlaygroundError(error);
+   568→   568→      setKeyTestResults((previous) => ({
+   569→   569→        ...previous,
+   570→   570→        [provider]: { ok: false, message: playgroundError.message },
+   571→   571→      }));
+   572→   572→      toast.error(playgroundError.message);
+   573→   573→    } finally {
+   574→   574→      setTestingKey(null);
+   575→   575→    }
+   576→   576→  }, []);
+   577→   577→
+   578→   578→  /* ---------------- models ---------------- */
+   579→   579→
+   580→   580→  const loadModels = useCallback(async (provider: ProviderId, force = false) => {
+   581→   581→    const cached = modelsRef.current[provider];
+   582→   582→    if (!force && (cached.loading || (cached.models.length > 0 && !cached.error))) return;
+   583→   583→
+   584→   584→    modelsRef.current = {
+   585→   585→      ...modelsRef.current,
+   586→   586→      [provider]: { ...cached, loading: true, error: null },
+   587→   587→    };
+   588→   588→    setModels(modelsRef.current);
+   589→   589→
+   590→   590→    try {
+   591→   591→      const apiKey = settingsRef.current.apiKeys[provider];
+   592→   592→      const list = await getAdapter(provider).fetchModels(apiKey);
+   593→   593→      modelsRef.current = {
+   594→   594→        ...modelsRef.current,
+   595→   595→        [provider]: { loading: false, error: null, models: list },
+   596→   596→      };
+   597→   597→    } catch (error) {
+   598→   598→      const playgroundError = toPlaygroundError(error);
+   599→   599→      modelsRef.current = {
+   600→   600→        ...modelsRef.current,
+   601→   601→        [provider]: { loading: false, error: playgroundError.message, models: [] },
+   602→   602→      };
+   603→   603→    }
+   604→   604→    setModels(modelsRef.current);
+   605→   605→  }, []);
+   606→   606→
+   607→   607→  /* ---------------- presets ---------------- */
+   608→   608→
+   609→   609→  const savePreset = useCallback(
+   610→   610→    (name: string, prompt: string) => {
+   611→   611→      const trimmed = name.trim();
+   612→   612→      if (!trimmed) {
+   613→   613→        toast.error('Give the preset a name first.');
+   614→   614→        return;
+   615→   615→      }
+   616→   616→      setPresets((previous) => {
+   617→   617→        const existing = previous.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
+   618→   618→        if (existing) {
+   619→   619→          toast.success(`Preset "${trimmed}" updated.`);
+   620→   620→          return previous.map((p) => (p.id === existing.id ? { ...p, prompt } : p));
+   621→   621→        }
+   622→   622→        toast.success(`Preset "${trimmed}" saved.`);
+   623→   623→        return [...previous, { id: uid(), name: trimmed, prompt }];
+   624→   624→      });
+   625→   625→    },
+   626→   626→    [setPresets],
+   627→   627→  );
+   628→   628→
+   629→   629→  const applyPreset = useCallback(
+   630→   630→    (id: string) => {
+   631→   631→      const preset = presetsRef.current.find((p) => p.id === id);
+   632→   632→      if (!preset) return;
+   633→   633→      updateActive({ systemPrompt: preset.prompt });
+   634→   634→      toast.success(`Preset "${preset.name}" applied.`);
+   635→   635→    },
+   636→   636→    [updateActive],
+   637→   637→  );
+   638→   638→
+   639→   639→  const renamePreset = useCallback(
+   640→   640→    (id: string, name: string) => {
+   641→   641→      const trimmed = name.trim();
+   642→   642→      if (!trimmed) return;
+   643→   643→      setPresets((previous) => previous.map((p) => (p.id === id ? { ...p, name: trimmed } : p)));
+   644→   644→      toast.success('Preset renamed.');
+   645→   645→    },
+   646→   646→    [setPresets],
+   647→   647→  );
+   648→   648→
+   649→   649→  const deletePreset = useCallback(
+   650→   650→    (id: string) => {
+   651→   651→      setPresets((previous) => previous.filter((p) => p.id !== id));
+   652→   652→      toast.success('Preset deleted.');
+   653→   653→    },
+   654→   654→    [setPresets],
+   655→   655→  );
+   656→   656→
+   657→   657→  /* ---------------- debug panel ---------------- */
+   658→   658→
+   659→   659→  const showRawPanel = settings.showRawPanel;
+   660→   660→  const setShowRawPanel = useCallback(
+   661→   661→    (value: boolean) => setSettings((previous) => ({ ...previous, showRawPanel: value })),
+   662→   662→    [setSettings],
+   663→   663→  );
+   664→   664→
+   665→   665→  /* ---------------- derived helpers ---------------- */
+   666→   666→
+   667→   667→  const nextRequestTokens = useMemo(() => {
+   668→   668→    if (!activeConversation) return 0;
+   669→   669→    return estimateConversationTokens(
+   670→   670→      activeConversation,
+   671→   671→      applyContextLimit(activeConversation.messages, activeConversation.contextLimit),
+   672→   672→    );
+   673→   673→  }, [activeConversation]);
+   674→   674→
+   675→   675→  /* ---------------- import / export ---------------- */
+   676→   676→
+   677→   677→  const exportConversation = useCallback((format: 'json' | 'md') => {
+   678→   678→    const conversation = activeConversationRef.current;
+   679→   679→    if (!conversation) return;
+   680→   680→    if (conversation.messages.length === 0) {
+   681→   681→      toast.error('Nothing to export yet — send a message first.');
+   682→   682→      return;
+   683→   683→    }
+   684→   684→    if (format === 'json') exportConversationAsJson(conversation);
+   685→   685→    else exportConversationAsMarkdown(conversation);
+   686→   686→    toast.success(`Conversation exported as ${format.toUpperCase()}.`);
+   687→   687→  }, []);
+   688→   688→
+   689→   689→  const importConversation = useCallback(
+   690→   690→    async (file: File) => {
+   691→   691→      try {
+   692→   692→        const text = await file.text();
+   693→   693→        const conversation = parseImportedConversation(text);
+   694→   694→        setConversations((previous) => [...previous, conversation]);
+   695→   695→        setActiveId(conversation.id);
+   696→   696→        toast.success(`Imported "${conversation.title}".`);
+   697→   697→      } catch (error) {
+   698→   698→        toast.error(`Import failed: ${error instanceof Error ? error.message : 'invalid file'}`);
+   699→   699→      }
+   700→   700→    },
+   701→   701→    [setConversations, setActiveId],
+   702→   702→  );
+   703→   703→
+   704→   704→  const exportAll = useCallback((includeKeys: boolean) => {
+   705→   705→    exportAllData(settingsRef.current, presetsRef.current, conversationsRef.current, includeKeys);
+   706→   706→    toast.success(includeKeys ? 'Full backup exported (keys included).' : 'Backup exported (keys excluded).');
+   707→   707→  }, []);
+   708→   708→
+   709→   709→  const importAll = useCallback(
+   710→   710→    async (file: File) => {
+   711→   711→      try {
+   712→   712→        const text = await file.text();
+   713→   713→        const parsed = parseFullBackup(text);
+   714→   714→        if (!parsed) {
+   715→   715→          toast.error('That file is not an API Playground backup.');
+   716→   716→          return;
+   717→   717→        }
+   718→   718→        if (parsed.settings) {
+   719→   719→          const imported = parsed.settings;
+   720→   720→          setSettings((previous) => ({
+   721→   721→            ...previous,
+   722→   722→            ...imported,
+   723→   723→            apiKeys: { ...previous.apiKeys, ...(imported.apiKeys ?? {}) },
+   724→   724→          }));
+   725→   725→        }
+   726→   726→        if (parsed.presets) setPresets(parsed.presets);
+   727→   727→        setConversations((previous) => {
+   728→   728→          const ids = new Set(previous.map((c) => c.id));
+   729→   729→          return [...previous, ...parsed.conversations.filter((c) => !ids.has(c.id))];
+   730→   730→        });
+   731→   731→        toast.success(`Backup imported — ${parsed.conversations.length} conversations.`);
+   732→   732→      } catch (error) {
+   733→   733→        toast.error(`Import failed: ${error instanceof Error ? error.message : 'invalid file'}`);
+   734→   734→      }
+   735→   735→    },
+   736→   736→    [setConversations, setPresets, setSettings],
+   737→   737→  );
+   738→   738→
+   739→   739→  /* ---------------- context value ---------------- */
+   740→   740→
+   741→   741→  const value: PlaygroundContextValue = {
+   742→   742→    ready,
+   743→   743→    conversations,
+   744→   744→    activeConversation,
+   745→   745→    selectConversation,
+   746→   746→    createNewChat,
+   747→   747→    deleteConversation,
+   748→   748→    renameConversation,
+   749→   749→    clearActiveChat,
+   750→   750→    setProvider,
+   751→   751→    setModel,
+   752→   752→    setSystemPrompt,
+   753→   753→    setGenerationSettings,
+   754→   754→    resetGenerationSettings,
+   755→   755→    setContextLimit,
+   756→   756→    sendMessage,
+   757→   757→    stopStreaming,
+   758→   758→    isStreaming,
+   759→   759→    streamingConvId,
+   760→   760→    streamingText,
+   761→   761→    editMessage,
+   762→   762→    deleteMessage,
+   763→   763→    regenerate,
+   764→   764→    chatError,
+   765→   765→    dismissChatError,
+   766→   766→    settings,
+   767→   767→    saveApiKey,
+   768→   768→    removeApiKey,
+   769→   769→    testApiKey,
+   770→   770→    testingKey,
+   771→   771→    keyTestResults,
+   772→   772→    models,
+   773→   773→    loadModels,
+   774→   774→    presets,
+   775→   775→    savePreset,
+   776→   776→    applyPreset,
+   777→   777→    renamePreset,
+   778→   778→    deletePreset,
+   779→   779→    showRawPanel,
+   780→   780→    setShowRawPanel,
+   781→   781→    rawDebug,
+   782→   782→    sidebarOpen,
+   783→   783→    toggleSidebar: () => setSidebarOpen((v) => !v),
+   784→   784→    settingsOpen,
+   785→   785→    toggleSettings: () => setSettingsOpen((v) => !v),
+   786→   786→    mobileDrawer,
+   787→   787→    setMobileDrawer,
+   788→   788→    nextRequestTokens,
+   789→   789→    exportConversation,
+   790→   790→    importConversation,
+   791→   791→    exportAll,
+   792→   792→    importAll,
+   793→   793→  };
+   794→   794→
+   795→   795→  return <PlaygroundContext.Provider value={value}>{children}</PlaygroundContext.Provider>;
+   796→   796→}
+   797→   797→

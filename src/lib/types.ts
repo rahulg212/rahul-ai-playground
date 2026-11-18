@@ -36,6 +36,12 @@ export interface ChatMessage {
   role: Role;
   content: string;
   createdAt: number;
+  /**
+   * Chain-of-thought / "thinking" text that reasoning models stream BEFORE the
+   * final answer (e.g. every current OpenRouter ":free" model). Stored so it
+   * can be shown in a collapsible block; never sent back to the provider.
+   */
+  reasoning?: string;
   meta?: AssistantMeta;
 }
 
@@ -152,6 +158,8 @@ export interface BuiltRequest {
 /** Outcome of a completed streaming chat request. */
 export interface StreamOutcome {
   text: string;
+  /** Accumulated thinking text (reasoning models only). */
+  reasoning?: string;
   usage?: TokenUsage;
   responseTimeMs: number;
   /** Pretty-printed request JSON with the API key masked. */
@@ -178,6 +186,12 @@ export interface ProviderAdapter {
   buildChatRequest(args: BuildChatRequestArgs): BuiltRequest;
   /** Pull the text delta out of one streamed JSON payload (or null). */
   extractDelta(json: unknown): string | null;
+  /**
+   * Optional: pull the "thinking" delta out of one streamed JSON payload.
+   * Reasoning models emit chain-of-thought before the answer; without this
+   * hook the user would stare at an empty bubble for a long time.
+   */
+  extractReasoningDelta?(json: unknown): string | null;
   /** Pull partial token usage out of one streamed JSON payload (or null). */
   extractUsage(json: unknown): Partial<TokenUsage> | null;
   /** Optional: return true when this SSE payload ends the stream. */

@@ -14,6 +14,7 @@
  */
 import { iterateSSE } from '@/lib/sse';
 import { providerLabel, raiseForStatus, toPlaygroundError } from '@/lib/errors';
+import { providerFetch } from '@/lib/transport';
 import type {
   BuiltRequest,
   ChatMessage,
@@ -64,13 +65,15 @@ export interface RunChatStreamParams {
   signal: AbortSignal;
   /** Called with every text delta as it arrives. */
   onDelta: (delta: string) => void;
+  /** Called with every "thinking" delta (reasoning models) as it arrives. */
+  onReasoning?: (delta: string) => void;
 }
 
 /** Hard cap on stored raw chunks so huge responses cannot blow up memory. */
 const MAX_RAW_CHUNKS = 400;
 
 export async function runChatStream(params: RunChatStreamParams): Promise<StreamOutcome> {
-  const { adapter, apiKey, model, systemPrompt, history, settings, signal, onDelta } = params;
+  const { adapter, apiKey, model, systemPrompt, history, settings, signal, onDelta, onReasoning } = params;
 
   const request = adapter.buildChatRequest({ apiKey, model, systemPrompt, history, settings });
   const rawRequest = prettyRequest(request);
@@ -78,7 +81,9 @@ export async function runChatStream(params: RunChatStreamParams): Promise<Stream
   const startedAt = performance.now();
   let response: Response;
   try {
-    response = await fetch(request.url, {
+    // providerFetch relays the request through the local /api/proxy route —
+    // the SSE stream comes back byte-for-byte identical to a direct call.
+    response = await providerFetch(request.url, {
       method: 'POST',
       headers: request.headers,
       body: JSON.stringify(request.body),
@@ -101,6 +106,7 @@ export async function runChatStream(params: RunChatStreamParams): Promise<Stream
   }
 
   let text = '';
+  let reasoning = '';
   let usage: Partial<TokenUsage> | undefined;
   const rawChunks: string[] = [];
 
@@ -128,6 +134,15 @@ export async function runChatStream(params: RunChatStreamParams): Promise<Stream
         text += delta;
         onDelta(delta);
       }
+      // Reasoning models stream chain-of-thought before the answer; surface it
+      // live so the UI can show a "Thinking" block instead of a blank bubble.
+      if (adapter.extractReasoningDelta) {
+        const reasoningDelta = adapter.extractReasoningDelta(json);
+        if (reasoningDelta) {
+          reasoning += reasoningDelta;
+          onReasoning?.(reasoningDelta);
+        }
+      }
       usage = mergeUsage(usage, adapter.extractUsage(json));
     }
   } catch (error) {
@@ -140,6 +155,7 @@ export async function runChatStream(params: RunChatStreamParams): Promise<Stream
 
   return {
     text,
+    reasoning: reasoning.length > 0 ? reasoning : undefined,
     usage: usage as TokenUsage | undefined,
     responseTimeMs: Math.round(performance.now() - startedAt),
     rawRequest,

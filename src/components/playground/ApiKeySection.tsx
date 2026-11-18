@@ -157,8 +157,9 @@ export function ApiKeySection() {
       {/* Localstorage warning */}
       <p className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
         <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        API keys are stored in your browser&apos;s localStorage and sent directly from your browser to
-        the provider. This app is meant for personal and local testing only — never use work keys.
+        API keys are stored in your browser&apos;s localStorage. Requests are relayed through this
+        app&apos;s local server proxy (/api/proxy) to reach the providers and stream responses.
+        This app is meant for personal, local testing only — never use work keys.
       </p>
     </SettingsSection>
   );

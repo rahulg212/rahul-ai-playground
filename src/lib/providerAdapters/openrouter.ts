@@ -31,7 +31,7 @@ const PROVIDER: ProviderId = 'openrouter';
 
 /** Same shape as the OpenAI chunk; typed separately for clarity. */
 interface OpenRouterChunk {
-  choices?: Array<{ delta?: { content?: string | null } }>;
+  choices?: Array<{ delta?: { content?: string | null; reasoning?: string | null } }>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -83,6 +83,19 @@ function extractDelta(json: unknown): string | null {
   return typeof content === 'string' && content.length > 0 ? content : null;
 }
 
+/**
+ * Reasoning support — IMPORTANT for OpenRouter in practice: essentially all
+ * currently available ":free" models (ling, north, ernie, nemotron, gemma,
+ * dots, ...) are reasoning models. They stream hundreds of tokens of
+ * chain-of-thought in `delta.reasoning` BEFORE any `delta.content`, so this
+ * hook is what keeps the chat UI responsive instead of looking frozen.
+ */
+function extractReasoningDelta(json: unknown): string | null {
+  const chunk = json as OpenRouterChunk;
+  const reasoning = chunk.choices?.[0]?.delta?.reasoning;
+  return typeof reasoning === 'string' && reasoning.length > 0 ? reasoning : null;
+}
+
 function extractUsage(json: unknown): Partial<TokenUsage> | null {
   const usage = (json as OpenRouterChunk).usage;
   if (!usage) return null;
@@ -131,6 +144,7 @@ export const openrouterAdapter: ProviderAdapter = {
   testKey,
   buildChatRequest,
   extractDelta,
+  extractReasoningDelta,
   extractUsage,
   isFinalPayload,
 };

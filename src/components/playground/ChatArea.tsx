@@ -58,6 +58,7 @@ export function ChatArea() {
     isStreaming,
     streamingConvId,
     streamingText,
+    streamingReasoning,
     chatError,
   } = usePlayground();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -73,7 +74,7 @@ export function ChatArea() {
     const element = scrollRef.current;
     if (!element || !nearBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [messages.length, streamingText, chatError, showStreamingHere]);
+  }, [messages.length, streamingText, streamingReasoning, chatError, showStreamingHere]);
 
   const handleScroll = () => {
     const element = scrollRef.current;
@@ -105,6 +106,7 @@ export function ChatArea() {
                   id: '__streaming__',
                   role: 'assistant',
                   content: streamingText,
+                  reasoning: streamingReasoning || undefined,
                   createdAt: Date.now(),
                 }}
                 isLast

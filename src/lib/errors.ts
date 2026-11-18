@@ -5,6 +5,7 @@
  * error) into a single PlaygroundError with a clear, actionable message that
  * includes the HTTP status code when one exists.
  */
+import { providerFetch } from '@/lib/transport';
 import { PlaygroundError, type ProviderId } from '@/lib/types';
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -26,6 +27,8 @@ function statusHint(status: number): string {
     case 401:
     case 403:
       return 'Invalid, expired or unauthorized API key.';
+    case 402:
+      return 'Payment required — the account is out of credits. On OpenRouter, pick a free model (IDs ending in ":free").';
     case 404:
       return 'Not found — the model ID or endpoint does not exist.';
     case 429:
@@ -73,6 +76,7 @@ export async function raiseForStatus(response: Response, provider: ProviderId): 
 
   let kind: PlaygroundError['kind'] = 'unknown';
   if (response.status === 401 || response.status === 403) kind = 'auth';
+  else if (response.status === 402) kind = 'auth';
   else if (response.status === 429) kind = 'rate_limit';
   else if (response.status === 404) kind = 'not_found';
   else if (response.status === 400) kind = 'bad_request';
@@ -95,13 +99,13 @@ export function toPlaygroundError(error: unknown, provider?: ProviderId): Playgr
     return new PlaygroundError('Generation stopped by user.', 'abort');
   }
 
-  // fetch() throws TypeError("Failed to fetch") for CORS blocks / network
-  // failures / offline — the most common issue with direct browser calls.
+  // fetch() throws TypeError("Failed to fetch") when the local /api/proxy
+  // relay itself is unreachable (dev server down, network offline, ...).
   if (error instanceof TypeError) {
-    const label = provider ? providerLabel(provider) : 'The provider';
+    const label = provider ? providerLabel(provider) : 'the provider';
     return new PlaygroundError(
-      `Network or CORS error: the browser could not reach ${label}'s API. ` +
-        'Check your internet connection. If your network blocks the request, the provider may not allow direct browser access.',
+      `Network error: could not reach the local API proxy while calling ${label}. ` +
+        'Make sure the app dev server is still running, then retry.',
       'cors',
     );
   }
@@ -120,7 +124,8 @@ export async function fetchJsonOrThrow(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(url, init);
+    // providerFetch relays the call through /api/proxy (see src/lib/transport.ts).
+    response = await providerFetch(url, init);
   } catch (error) {
     throw toPlaygroundError(error, provider);
   }

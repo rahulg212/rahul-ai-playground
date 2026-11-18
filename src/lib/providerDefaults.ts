@@ -14,7 +14,10 @@ export const DEFAULT_MODELS: Record<ProviderId, string> = {
   openai: 'gpt-4o-mini',
   anthropic: 'claude-sonnet-4-5',
   gemini: 'gemini-2.5-flash',
-  openrouter: 'openai/gpt-4o-mini',
+  // A FREE model: OpenRouter free-tier keys have no credits, so a paid default
+  // would fail with HTTP 402 "Insufficient credits". Free model IDs always end
+  // in ":free" and the Model section can filter the list down to just those.
+  openrouter: 'inclusionai/ling-3.2-flash:free',
 };
 
 /** Built-in system-prompt presets (seeded into localStorage on first run). */

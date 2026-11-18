@@ -102,6 +102,8 @@ export interface PlaygroundContextValue {
   isStreaming: boolean;
   streamingConvId: string | null;
   streamingText: string;
+  /** Live "thinking" text while a reasoning model streams its chain-of-thought. */
+  streamingReasoning: string;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => void;
   regenerate: () => Promise<void>;
@@ -185,6 +187,8 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState('');
+  /** Live chain-of-thought for reasoning models (rendered in a Thinking block). */
+  const [streamingReasoning, setStreamingReasoning] = useState('');
   const [chatError, setChatError] = useState<string | null>(null);
   const [rawDebug, setRawDebug] = useState<RawDebug | null>(null);
   const [testingKey, setTestingKey] = useState<ProviderId | null>(null);
@@ -202,6 +206,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   const modelsRef = useRef(models);
   const abortRef = useRef<AbortController | null>(null);
   const streamingTextRef = useRef('');
+  const streamingReasoningRef = useRef('');
   const isStreamingRef = useRef(false);
 
   useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
@@ -371,18 +376,21 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       abortRef.current = controller;
       isStreamingRef.current = true;
       streamingTextRef.current = '';
+      streamingReasoningRef.current = '';
       setStreamingText('');
+      setStreamingReasoning('');
       setStreamingConvId(conversationId);
       setIsStreaming(true);
       setChatError(null);
       setRawDebug(null);
 
-      const appendAssistant = (content: string, extra?: Partial<AssistantMeta>) => {
+      const appendAssistant = (content: string, extra?: Partial<AssistantMeta>, reasoning?: string) => {
         const message: ChatMessage = {
           id: uid(),
           role: 'assistant',
           content,
           createdAt: Date.now(),
+          reasoning: reasoning && reasoning.length > 0 ? reasoning : undefined,
           meta: {
             provider: conversation.provider,
             model: conversation.model,
@@ -409,11 +417,19 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
             streamingTextRef.current += delta;
             setStreamingText(streamingTextRef.current);
           },
+          onReasoning: (delta) => {
+            streamingReasoningRef.current += delta;
+            setStreamingReasoning(streamingReasoningRef.current);
+          },
         });
-        appendAssistant(outcome.text || '*(empty response)*', {
-          responseTimeMs: outcome.responseTimeMs,
-          usage: outcome.usage,
-        });
+        appendAssistant(
+          outcome.text || '*(empty response)*',
+          {
+            responseTimeMs: outcome.responseTimeMs,
+            usage: outcome.usage,
+          },
+          outcome.reasoning,
+        );
         setRawDebug({
           request: outcome.rawRequest,
           response: outcome.rawResponse,
@@ -423,15 +439,20 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       } catch (error) {
         const playgroundError = toPlaygroundError(error);
         const partial = streamingTextRef.current;
+        const partialReasoning = streamingReasoningRef.current;
         if (playgroundError.kind === 'abort') {
           // "Stop" pressed: keep whatever text already arrived.
-          if (partial) {
-            appendAssistant(partial, { stopped: true });
+          if (partial || partialReasoning) {
+            appendAssistant(partial || '*(stopped before any text arrived)*', { stopped: true }, partialReasoning);
           }
           toast.info('Generation stopped.');
         } else {
-          if (partial) {
-            appendAssistant(partial, { stopped: true, error: playgroundError.message });
+          if (partial || partialReasoning) {
+            appendAssistant(
+              partial || '*(error before any text arrived)*',
+              { stopped: true, error: playgroundError.message },
+              partialReasoning,
+            );
           }
           setChatError(playgroundError.message);
           toast.error(playgroundError.message);
@@ -448,9 +469,11 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
         abortRef.current = null;
         isStreamingRef.current = false;
         streamingTextRef.current = '';
+        streamingReasoningRef.current = '';
         setIsStreaming(false);
         setStreamingConvId(null);
         setStreamingText('');
+        setStreamingReasoning('');
       }
     },
     [updateConversationById],
@@ -548,33 +571,6 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     [setSettings],
   );
 
-  const testApiKey = useCallback(async (provider: ProviderId) => {
-    const key = settingsRef.current.apiKeys[provider];
-    if (!key) {
-      setKeyTestResults((previous) => ({
-        ...previous,
-        [provider]: { ok: false, message: 'No key entered — type one first.' },
-      }));
-      return;
-    }
-    setTestingKey(provider);
-    try {
-      const result = await getAdapter(provider).testKey(key);
-      setKeyTestResults((previous) => ({ ...previous, [provider]: result }));
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
-    } catch (error) {
-      const playgroundError = toPlaygroundError(error);
-      setKeyTestResults((previous) => ({
-        ...previous,
-        [provider]: { ok: false, message: playgroundError.message },
-      }));
-      toast.error(playgroundError.message);
-    } finally {
-      setTestingKey(null);
-    }
-  }, []);
-
   /* ---------------- models ---------------- */
 
   const loadModels = useCallback(async (provider: ProviderId, force = false) => {
@@ -603,6 +599,43 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     }
     setModels(modelsRef.current);
   }, []);
+
+  const testApiKey = useCallback(
+    async (provider: ProviderId) => {
+      const key = settingsRef.current.apiKeys[provider];
+      if (!key) {
+        setKeyTestResults((previous) => ({
+          ...previous,
+          [provider]: { ok: false, message: 'No key entered — type one first.' },
+        }));
+        return;
+      }
+      setTestingKey(provider);
+      try {
+        const result = await getAdapter(provider).testKey(key);
+        setKeyTestResults((previous) => ({ ...previous, [provider]: result }));
+        if (result.ok) {
+          toast.success(result.message);
+          // A valid key means the models endpoint is usable too — (re)load the
+          // list right away so the Model section shows available models
+          // immediately after a successful test.
+          void loadModels(provider, true);
+        } else {
+          toast.error(result.message);
+        }
+      } catch (error) {
+        const playgroundError = toPlaygroundError(error);
+        setKeyTestResults((previous) => ({
+          ...previous,
+          [provider]: { ok: false, message: playgroundError.message },
+        }));
+        toast.error(playgroundError.message);
+      } finally {
+        setTestingKey(null);
+      }
+    },
+    [loadModels],
+  );
 
   /* ---------------- presets ---------------- */
 
@@ -758,6 +791,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     isStreaming,
     streamingConvId,
     streamingText,
+    streamingReasoning,
     editMessage,
     deleteMessage,
     regenerate,
