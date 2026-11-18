@@ -12,7 +12,20 @@ export const STORAGE_KEYS = {
   activeConversationId: 'apiPlayground.activeConversationId',
   settings: 'apiPlayground.settings',
   presets: 'apiPlayground.presets',
+  drafts: 'apiPlayground.drafts',
+  dataVersion: 'apiPlayground.dataVersion',
 } as const;
+
+/**
+ * Bumped whenever persisted defaults change in a way old browsers should
+ * migrate to. Version history:
+ *   2 — maxTokens default raised 1024 -> 4096. Reasoning models (all current
+ *       OpenRouter ":free" models) spend their chain-of-thought INSIDE
+ *       max_tokens, so 1024 could be consumed entirely by thinking and the
+ *       visible answer came back empty. Existing conversations carrying the
+ *       old 1024 default are upgraded exactly once.
+ */
+export const CURRENT_DATA_VERSION = 2;
 
 export function uid(): string {
   // crypto.randomUUID is available in all modern browsers and secure contexts.
@@ -24,10 +37,33 @@ export function uid(): string {
 export function defaultGenerationSettings(): GenerationSettings {
   return {
     temperature: 0.7,
-    maxTokens: 1024,
+    // 4096: room for reasoning models to think AND answer (see CURRENT_DATA_VERSION).
+    maxTokens: 4096,
     topP: 1,
     stopSequences: [],
   };
+}
+
+/**
+ * One-time migration of data saved by an older version of the app.
+ * Returns the (possibly upgraded) conversation list — callers persist the
+ * result and stamp CURRENT_DATA_VERSION when done.
+ */
+export function migrateConversations(list: Conversation[]): Conversation[] {
+  const version = loadJson<number>(STORAGE_KEYS.dataVersion, 1);
+  if (version >= CURRENT_DATA_VERSION) return list;
+  if (version < 2) {
+    list = list.map((conversation) =>
+      conversation.settings?.maxTokens === 1024
+        ? {
+            ...conversation,
+            settings: { ...conversation.settings, maxTokens: 4096 },
+          }
+        : conversation,
+    );
+  }
+  saveJson(STORAGE_KEYS.dataVersion, CURRENT_DATA_VERSION);
+  return list;
 }
 
 export function defaultSettings(): AppSettings {

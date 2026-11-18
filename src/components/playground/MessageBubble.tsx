@@ -5,7 +5,7 @@
  * action row (copy / edit / delete / regenerate) and the response meta line
  * (model, latency, token usage) under assistant messages.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
@@ -60,6 +60,25 @@ function ThinkingBlock({
   const autoOpen = streaming && !hasContent;
   const shown = autoOpen || open;
 
+  // Reasoning models routinely think for 10-30s before the first answer token.
+  // A live seconds counter proves the request is alive instead of frozen.
+  // (Start timestamp + interval subscription; no synchronous setState here.)
+  const startRef = useRef<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!autoOpen) {
+      startRef.current = null;
+      return;
+    }
+    startRef.current = Date.now();
+    const timer = setInterval(() => {
+      if (startRef.current !== null) {
+        setElapsedSeconds(Math.floor((Date.now() - startRef.current) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [autoOpen]);
+
   return (
     <div className="mb-2 overflow-hidden rounded-lg border border-dashed bg-muted/40">
       <button
@@ -69,7 +88,9 @@ function ThinkingBlock({
         aria-expanded={shown}
       >
         <Brain className={cn('h-3.5 w-3.5 shrink-0', autoOpen && 'animate-pulse')} />
-        <span>{autoOpen ? 'Thinking…' : 'Thought process'}</span>
+        <span>
+          {autoOpen ? `Thinking… ${elapsedSeconds}s` : 'Thought process'}
+        </span>
         <ChevronDown className={cn('ml-auto h-3 w-3 shrink-0 transition-transform', shown && 'rotate-180')} />
       </button>
       {shown && (
@@ -277,7 +298,7 @@ export function MessageBubble({ message, isLast, streaming = false }: MessageBub
 
 /** Dismissable error banner shown when a request fails. */
 export function ChatErrorBanner() {
-  const { chatError, dismissChatError, regenerate } = usePlayground();
+  const { chatError, chatErrorAction, dismissChatError, regenerate } = usePlayground();
   if (!chatError) return null;
   return (
     <div
@@ -286,6 +307,16 @@ export function ChatErrorBanner() {
     >
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <p className="min-w-0 flex-1 break-words">{chatError}</p>
+      {chatErrorAction && (
+        <Button
+          size="sm"
+          className="h-7 shrink-0"
+          onClick={() => void chatErrorAction.run()}
+          title={chatErrorAction.label}
+        >
+          <Zap className="h-3.5 w-3.5" /> {chatErrorAction.label}
+        </Button>
+      )}
       <Button variant="outline" size="sm" className="h-7 shrink-0" onClick={() => void regenerate()}>
         <RefreshCw className="h-3.5 w-3.5" /> Retry
       </Button>

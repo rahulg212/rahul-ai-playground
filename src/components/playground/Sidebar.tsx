@@ -127,7 +127,13 @@ function SidebarContent() {
     const query = search.trim().toLowerCase();
     const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
     if (!query) return sorted;
-    return sorted.filter((conversation) => conversation.title.toLowerCase().includes(query));
+    // Full-text search, like LibreChat / OpenWebUI: match the title OR any
+    // message content inside the conversation.
+    return sorted.filter(
+      (conversation) =>
+        conversation.title.toLowerCase().includes(query) ||
+        conversation.messages.some((m) => m.content.toLowerCase().includes(query)),
+    );
   }, [conversations, search]);
 
   return (
@@ -151,7 +157,7 @@ function SidebarContent() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search chats…"
+            placeholder="Search chats and messages…"
             className="h-8 pl-8 text-sm"
             aria-label="Search conversations"
           />

@@ -86,6 +86,12 @@ export interface AppSettings {
 export interface ModelInfo {
   id: string;
   label?: string;
+  /** True when the model costs nothing (OpenRouter ":free" / zero pricing). */
+  free?: boolean;
+  /** Advertised context window in tokens, when the provider reports one. */
+  contextLength?: number;
+  /** Approximate USD cost per 1M tokens, when the provider reports pricing. */
+  costPerMillion?: { input: number; output: number };
 }
 
 /** Result of a "Test Key" call. */
@@ -100,6 +106,16 @@ export interface ProviderCapabilities {
   maxTokens: boolean;
   topP: boolean;
   stopSequences: boolean;
+}
+
+/**
+ * An optional recovery action attached to a chat error, e.g. "Retry with a
+ * free model" when an OpenRouter key has no credits for a paid model. Rendered
+ * as a button inside the error banner.
+ */
+export interface ChatErrorAction {
+  label: string;
+  run: () => Promise<void> | void;
 }
 
 /** Content of the toggleable Raw / debug panel. */

@@ -8,9 +8,8 @@ import React from 'react';
 import { Coins, Menu, Moon, PanelLeft, PanelRight, Sun, TerminalSquare } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { usePlayground } from '@/components/playground/context';
-import { getAdapter } from '@/lib/providerAdapters';
+import { ModelPicker } from '@/components/playground/ModelPicker';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -49,8 +48,6 @@ export function TopBar() {
     nextRequestTokens,
   } = usePlayground();
 
-  const adapter = activeConversation ? getAdapter(activeConversation.provider) : null;
-
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-2 sm:px-3">
       {/* Sidebar toggles */}
@@ -74,17 +71,12 @@ export function TopBar() {
         <Menu className="h-4 w-4" />
       </Button>
 
-      {/* Title + provider/model summary */}
+      {/* Title + BYOK-standard header model picker */}
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <h1 className="truncate text-sm font-semibold">{activeConversation?.title ?? 'API Playground'}</h1>
-        {adapter && (
-          <Badge variant="outline" className="hidden shrink-0 sm:inline-flex">
-            {adapter.label}
-          </Badge>
-        )}
-        <span className="hidden min-w-0 truncate text-xs text-muted-foreground md:inline">
-          {activeConversation?.model}
-        </span>
+        <h1 className="hidden truncate text-sm font-semibold md:block">
+          {activeConversation?.title ?? 'API Playground'}
+        </h1>
+        <ModelPicker />
       </div>
 
       {/* Right side actions */}

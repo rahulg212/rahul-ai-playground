@@ -27,7 +27,7 @@ function EmptyState() {
           <ol className="mx-auto max-w-xs list-decimal space-y-1 text-left text-sm text-muted-foreground">
             <li>Pick a provider in the settings panel (right).</li>
             <li>Paste an API key and press Save, then Test Key.</li>
-            <li>Choose or type a model ID.</li>
+            <li>Pick a model from the header picker — or type a custom ID.</li>
             <li>Write a system prompt (or load a preset) and send a message.</li>
           </ol>
         </div>
@@ -120,7 +120,8 @@ export function ChatArea() {
         <ChatErrorBanner />
       </div>
       <RawPanel />
-      <ChatInput />
+      {/* key remounts the composer per conversation → restores the saved draft. */}
+      <ChatInput key={conversation?.id ?? 'none'} />
     </div>
   );
 }

@@ -1,20 +1,50 @@
 'use client';
 
 /**
- * The message composer: auto-growing textarea, Enter to send,
- * Shift+Enter for a newline, and a Send/Stop button.
+ * The message composer, matching what mainstream BYOK clients do:
+ *   - auto-growing textarea, Enter to send, Shift+Enter for a newline
+ *   - Send morphs into Stop while streaming
+ *   - the unsent draft is persisted per conversation (survives reloads/errors)
+ *   - a nudge + shortcut to settings appears while no API key is configured
  */
 import React, { useRef, useState } from 'react';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, KeyRound, Square } from 'lucide-react';
 import { usePlayground } from '@/components/playground/context';
+import { providerLabel } from '@/lib/errors';
+import { loadJson, saveJson, STORAGE_KEYS } from '@/lib/storage';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
+
+/** localStorage map of unsent drafts keyed by conversation id. */
+type DraftMap = Record<string, string>;
+
+function readDraft(conversationId: string): string {
+  const drafts = loadJson<DraftMap>(STORAGE_KEYS.drafts, {});
+  return drafts[conversationId] ?? '';
+}
+
+function writeDraft(conversationId: string, text: string): void {
+  const drafts = loadJson<DraftMap>(STORAGE_KEYS.drafts, {});
+  if (text) drafts[conversationId] = text;
+  else delete drafts[conversationId];
+  saveJson(STORAGE_KEYS.drafts, drafts);
+}
 
 export function ChatInput() {
-  const { sendMessage, stopStreaming, isStreaming, activeConversation } = usePlayground();
-  const [text, setText] = useState('');
+  const {
+    sendMessage,
+    stopStreaming,
+    isStreaming,
+    activeConversation,
+    settings,
+    toggleSettings,
+    setMobileDrawer,
+  } = usePlayground();
+  const [text, setText] = useState(() => (activeConversation?.id ? readDraft(activeConversation.id) : ''));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationId = activeConversation?.id ?? null;
+  // Note: ChatInput is remounted with key={conversationId} by ChatArea, so the
+  // lazy useState above re-reads the persisted draft on every chat switch.
 
   const autoResize = () => {
     const element = textareaRef.current;
@@ -23,10 +53,17 @@ export function ChatInput() {
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   };
 
+  const handleChange = (value: string) => {
+    setText(value);
+    if (conversationId) writeDraft(conversationId, value);
+    autoResize();
+  };
+
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed || isStreaming || !conversationId) return;
     setText('');
+    writeDraft(conversationId, '');
     // Reset the textarea height for the next message.
     requestAnimationFrame(() => {
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -42,17 +79,37 @@ export function ChatInput() {
     }
   };
 
+  const provider = activeConversation?.provider;
+  const hasKey = !provider || Boolean(settings.apiKeys[provider]);
+
+  const openSettings = () => {
+    setMobileDrawer('settings');
+    toggleSettings();
+  };
+
   return (
     <div className="border-t bg-background p-3">
       <div className="mx-auto w-full max-w-3xl">
+        {/* Nudge while the active provider has no key (BYOK onboarding). */}
+        {!hasKey && (
+          <button
+            type="button"
+            onClick={openSettings}
+            className="mb-2 flex w-full items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-left text-xs text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-400"
+          >
+            <KeyRound className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              Add your {provider ? providerLabel(provider) : ''} API key in Settings to start
+              chatting — it stays in this browser.
+            </span>
+            <span className="shrink-0 font-medium underline-offset-2 underline">Open settings</span>
+          </button>
+        )}
         <div className="flex items-end gap-2 rounded-xl border bg-card p-2 shadow-sm transition-colors focus-within:border-primary/50">
           <Textarea
             ref={textareaRef}
             value={text}
-            onChange={(event) => {
-              setText(event.target.value);
-              autoResize();
-            }}
+            onChange={(event) => handleChange(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
               isStreaming
@@ -87,7 +144,7 @@ export function ChatInput() {
             </Button>
           )}
         </div>
-        <p className={cn('px-2 pt-1.5 text-[11px] text-muted-foreground')}>
+        <p className={'px-2 pt-1.5 text-[11px] text-muted-foreground'}>
           Enter to send · Shift+Enter for a newline · the full conversation (respecting the context limit) is sent with every request
         </p>
       </div>

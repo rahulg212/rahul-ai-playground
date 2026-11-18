@@ -33,6 +33,7 @@ import {
   parseImportedConversation,
 } from '@/lib/exportUtils';
 import { getAdapter } from '@/lib/providerAdapters';
+import { DEFAULT_MODELS, PROVIDER_IDS } from '@/lib/providerDefaults';
 import { runChatStream } from '@/lib/streaming';
 import {
   STORAGE_KEYS,
@@ -42,6 +43,7 @@ import {
   loadConversations,
   loadPresets,
   loadSettings,
+  migrateConversations,
   uid,
 } from '@/lib/storage';
 import {
@@ -52,6 +54,7 @@ import {
 import type {
   AppSettings,
   AssistantMeta,
+  ChatErrorAction,
   ChatMessage,
   Conversation,
   GenerationSettings,
@@ -59,6 +62,7 @@ import type {
   Preset,
   ProviderId,
   RawDebug,
+  StreamOutcome,
   TestKeyResult,
 } from '@/lib/types';
 
@@ -74,6 +78,26 @@ const EMPTY_MODELS: Record<ProviderId, ModelsState> = {
   gemini: { loading: false, error: null, models: [] },
   openrouter: { loading: false, error: null, models: [] },
 };
+
+/**
+ * Pick the best free model from a fetched list (OpenRouter only).
+ * Prefers the app's default free model, then the first available one.
+ * Returns null when the list has no free models (or is not loaded yet).
+ */
+function pickFreeModel(models: ModelInfo[]): string | null {
+  const free = models.filter((m) => m.free);
+  if (free.length === 0) return null;
+  const preferred = free.find((m) => m.id === DEFAULT_MODELS.openrouter) ?? free[0];
+  return preferred.id;
+}
+
+/**
+ * How many times a chat request is retried automatically when the provider
+ * returns a transient failure (429 rate limit / 5xx) BEFORE any text has been
+ * streamed. Mirrors what NextChat / ChatBox do; makes free-tier models feel
+ * reliable instead of failing on the first rate-limit window.
+ */
+const MAX_AUTO_RETRIES = 2;
 
 export interface PlaygroundContextValue {
   /** True once the active conversation exists (localStorage loaded synchronously). */
@@ -108,6 +132,8 @@ export interface PlaygroundContextValue {
   deleteMessage: (messageId: string) => void;
   regenerate: () => Promise<void>;
   chatError: string | null;
+  /** Optional one-click recovery attached to the current chat error. */
+  chatErrorAction: ChatErrorAction | null;
   dismissChatError: () => void;
 
   // API keys
@@ -190,6 +216,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   /** Live chain-of-thought for reasoning models (rendered in a Thinking block). */
   const [streamingReasoning, setStreamingReasoning] = useState('');
   const [chatError, setChatError] = useState<string | null>(null);
+  const [chatErrorAction, setChatErrorAction] = useState<ChatErrorAction | null>(null);
   const [rawDebug, setRawDebug] = useState<RawDebug | null>(null);
   const [testingKey, setTestingKey] = useState<ProviderId | null>(null);
   const [keyTestResults, setKeyTestResults] = useState<Partial<Record<ProviderId, TestKeyResult>>>({});
@@ -233,6 +260,12 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       setActiveId(conversations[0].id);
     }
   }, [conversations, activeId, setConversations, setActiveId]);
+
+  // One-time migration of data written by older versions of the app
+  // (e.g. raising maxTokens so reasoning models can think AND answer).
+  useEffect(() => {
+    setConversations((previous) => migrateConversations(previous));
+  }, [setConversations]);
 
   const ready = activeConversation !== null;
 
@@ -287,6 +320,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     setActiveId(fresh.id);
     setMobileDrawer(null);
     setChatError(null);
+    setChatErrorAction(null);
   }, [setConversations, setActiveId]);
 
   const deleteConversation = useCallback(
@@ -316,6 +350,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   const clearActiveChat = useCallback(() => {
     updateActive({ messages: [] });
     setChatError(null);
+    setChatErrorAction(null);
     toast.success('Chat cleared.');
   }, [updateActive]);
 
@@ -382,6 +417,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       setStreamingConvId(conversationId);
       setIsStreaming(true);
       setChatError(null);
+      setChatErrorAction(null);
       setRawDebug(null);
 
       const appendAssistant = (content: string, extra?: Partial<AssistantMeta>, reasoning?: string) => {
@@ -405,23 +441,52 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       try {
         // The adapter turns our internal format into the provider request and
         // parses the streamed response back — see src/lib/providerAdapters.
-        const outcome = await runChatStream({
-          adapter,
-          apiKey,
-          model: conversation.model || adapter.defaultModel,
-          systemPrompt: conversation.systemPrompt,
-          history: limited,
-          settings: conversation.settings,
-          signal: controller.signal,
-          onDelta: (delta) => {
-            streamingTextRef.current += delta;
-            setStreamingText(streamingTextRef.current);
-          },
-          onReasoning: (delta) => {
-            streamingReasoningRef.current += delta;
-            setStreamingReasoning(streamingReasoningRef.current);
-          },
-        });
+        // Transient provider failures (429 / 5xx) are retried automatically
+        // as long as NOTHING has streamed yet — otherwise the partial text
+        // would be duplicated in the conversation.
+        let outcome: StreamOutcome | null = null;
+        for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt += 1) {
+          try {
+            outcome = await runChatStream({
+              adapter,
+              apiKey,
+              model: conversation.model || adapter.defaultModel,
+              systemPrompt: conversation.systemPrompt,
+              history: limited,
+              settings: conversation.settings,
+              signal: controller.signal,
+              onDelta: (delta) => {
+                streamingTextRef.current += delta;
+                setStreamingText(streamingTextRef.current);
+              },
+              onReasoning: (delta) => {
+                streamingReasoningRef.current += delta;
+                setStreamingReasoning(streamingReasoningRef.current);
+              },
+            });
+            break;
+          } catch (retryError) {
+            const retryPlaygroundError = toPlaygroundError(retryError, adapter.id);
+            const nothingStreamed =
+              streamingTextRef.current === '' && streamingReasoningRef.current === '';
+            const transient =
+              retryPlaygroundError.kind === 'rate_limit' || retryPlaygroundError.kind === 'server';
+            if (!transient || !nothingStreamed || retryPlaygroundError.kind === 'abort') {
+              throw retryError; // permanent failure or user abort — handle below
+            }
+            if (attempt < MAX_AUTO_RETRIES) {
+              toast.info(
+                `${providerLabel(conversation.provider)} ${
+                  retryPlaygroundError.kind === 'rate_limit' ? 'rate limit' : 'server error'
+                } — retrying (attempt ${attempt + 2} of ${MAX_AUTO_RETRIES + 1})…`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+            } else {
+              throw retryError; // retries exhausted — handle below
+            }
+          }
+        }
+        if (!outcome) throw new Error('Chat failed without a response.');
         appendAssistant(
           outcome.text || '*(empty response)*',
           {
@@ -455,7 +520,30 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
             );
           }
           setChatError(playgroundError.message);
+          setChatErrorAction(null);
           toast.error(playgroundError.message);
+          // One-click recovery for the most common OpenRouter failure modes:
+          // no credits (402) or a model ID the key cannot use (400/404). A
+          // free model is ALWAYS available on free-tier keys, so offer to
+          // switch and re-send in a single click.
+          if (
+            conversation.provider === 'openrouter' &&
+            (playgroundError.status === 402 ||
+              playgroundError.status === 404 ||
+              playgroundError.status === 400)
+          ) {
+            const freeModel =
+              pickFreeModel(modelsRef.current.openrouter.models) ?? DEFAULT_MODELS.openrouter;
+            if (freeModel !== conversation.model) {
+              setChatErrorAction({
+                label: `Retry with ${freeModel}`,
+                run: async () => {
+                  updateConversationById(conversationId, { model: freeModel });
+                  await runCompletion(conversationId, history);
+                },
+              });
+            }
+          }
           // Even failed attempts are useful in the Raw panel.
           if (playgroundError.rawRequest) {
             setRawDebug({
@@ -544,7 +632,10 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     await runCompletion(conversation.id, messages);
   }, [runCompletion, updateConversationById]);
 
-  const dismissChatError = useCallback(() => setChatError(null), []);
+  const dismissChatError = useCallback(() => {
+    setChatError(null);
+    setChatErrorAction(null);
+  }, []);
 
   /* ---------------- API keys ---------------- */
 
@@ -599,6 +690,21 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     }
     setModels(modelsRef.current);
   }, []);
+
+  // BYOK-bootstrapping convenience: populate the model pickers as soon as the
+  // app opens for every provider that either has a saved key or — like
+  // OpenRouter — exposes a public models endpoint. Users of mainstream BYOK
+  // clients expect the model list to be there WITHOUT having to visit
+  // settings first. loadModels() deduplicates, so this is safe.
+  useEffect(() => {
+    if (!ready) return;
+    for (const provider of PROVIDER_IDS) {
+      if (provider === 'openrouter' || settingsRef.current.apiKeys[provider]) {
+        void loadModels(provider);
+      }
+    }
+    // Intentionally runs once, when storage has hydrated.
+  }, [ready]);
 
   const testApiKey = useCallback(
     async (provider: ProviderId) => {
@@ -796,6 +902,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     deleteMessage,
     regenerate,
     chatError,
+    chatErrorAction,
     dismissChatError,
     settings,
     saveApiKey,

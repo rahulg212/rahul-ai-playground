@@ -126,12 +126,27 @@ async function testKey(apiKey: string): Promise<TestKeyResult> {
     PROVIDER,
   );
   const data = (
-    json as { data?: { label?: string; limit?: number | null; usage?: number; is_free_tier?: boolean } }
+    json as {
+      data?: {
+        label?: string;
+        limit?: number | null;
+        usage?: number;
+        is_free_tier?: boolean;
+        free_model_daily_requests?: { used?: number; limit?: number; remaining?: number };
+      };
+    }
   ).data;
   const parts: string[] = ['Key is valid.'];
   if (data?.label) parts.push(`Label: ${data.label}.`);
   if (typeof data?.usage === 'number') parts.push(`Used: $${data.usage.toFixed(4)}.`);
   if (data?.limit != null) parts.push(`Limit: $${data.limit}.`);
+  // Free-tier keys get a daily budget of ":free" model requests — surfacing the
+  // remaining count explains most OpenRouter 429s before they happen.
+  const freeQuota = data?.free_model_daily_requests;
+  if (freeQuota && typeof freeQuota.limit === 'number') {
+    const remaining = typeof freeQuota.remaining === 'number' ? freeQuota.remaining : freeQuota.limit - (freeQuota.used ?? 0);
+    parts.push(`Free models today: ${remaining}/${freeQuota.limit} requests left.`);
+  }
   return { ok: true, message: parts.join(' ') };
 }
 
