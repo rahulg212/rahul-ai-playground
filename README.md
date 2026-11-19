@@ -2,7 +2,7 @@
 
 A fast, private, local-first playground & multi-model arena to chat, test, stream, and race models from **OpenAI**, **Anthropic Claude**, **Google Gemini**, and **OpenRouter** directly in your browser.
 
-🌐 **Live GitHub Pages URL:** [https://rg212.github.io/rahul-ai-playground/](https://rg212.github.io/rahul-ai-playground/)
+🌐 **Live GitHub Pages URL:** [https://rahulg212.github.io/rahul-ai-playground/](https://rahulg212.github.io/rahul-ai-playground/)
 
 ---
 
