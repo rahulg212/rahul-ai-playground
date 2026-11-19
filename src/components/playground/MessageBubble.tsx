@@ -28,6 +28,8 @@ import {
   RefreshCw,
   Trash2,
   User,
+  Volume2,
+  VolumeX,
   X,
   Zap,
 } from 'lucide-react';
@@ -320,7 +322,33 @@ export function MessageBubble({ message, isLast, streaming = false }: MessageBub
     await editMessage(message.id, trimmed);
   };
 
+  const [speaking, setSpeaking] = useState(false);
+
+  const toggleSpeak = () => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      toast.error('Text-to-speech is not supported in this browser.');
+      return;
+    }
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const clean = view.content.replace(/[#*`_~[\]]/g, '').trim();
+    if (!clean) return;
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+    setSpeaking(true);
+  };
+
   const score = refiningThis ? undefined : view.score;
+  const throughput =
+    view.usage?.completionTokens && view.responseTimeMs && view.responseTimeMs > 0
+      ? (view.usage.completionTokens / (view.responseTimeMs / 1000)).toFixed(1)
+      : null;
 
   return (
     <article className={cn('group flex gap-3', isUser && 'flex-row-reverse')} aria-label={isUser ? 'Your message' : 'Assistant message'}>
@@ -423,6 +451,9 @@ export function MessageBubble({ message, isLast, streaming = false }: MessageBub
                   {view.usage.totalTokens !== undefined ? ` (${view.usage.totalTokens} tok)` : ''}
                 </span>
               )}
+              {throughput && (
+                <span className="font-mono text-emerald-600 dark:text-emerald-400">· {throughput} tok/s</span>
+              )}
               <ScoreChip message={message} score={score} />
               {meta.stopped && (
                 <Badge variant="outline" className="h-4 gap-0.5 px-1 text-[10px]">
@@ -464,6 +495,18 @@ export function MessageBubble({ message, isLast, streaming = false }: MessageBub
                 title="Copy"
               >
                 <Copy className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {!isUser && !streaming && !refiningThis && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn('h-7 w-7 transition-colors', speaking && 'text-primary animate-pulse')}
+                onClick={toggleSpeak}
+                aria-label={speaking ? 'Stop speech' : 'Read aloud'}
+                title={speaking ? 'Stop speech' : 'Read aloud (Text to speech)'}
+              >
+                {speaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
               </Button>
             )}
             {isUser && !isStreaming && (

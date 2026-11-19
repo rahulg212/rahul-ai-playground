@@ -72,6 +72,8 @@ export function defaultSettings(): AppSettings {
   return {
     apiKeys: { openai: '', anthropic: '', gemini: '', openrouter: '' },
     showRawPanel: false,
+    customProxyUrl: '',
+    soundEnabled: true,
   };
 }
 

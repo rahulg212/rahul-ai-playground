@@ -141,12 +141,12 @@ function SidebarContent() {
       {/* Brand + new chat + search */}
       <div className="space-y-3 border-b p-3">
         <div className="flex items-center gap-2 px-1">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-xs">
             <Sparkles className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-bold leading-tight">API Playground</div>
-            <div className="text-[11px] text-muted-foreground leading-tight">Test LLM keys locally</div>
+            <div className="text-sm font-bold leading-tight truncate">Rahul&apos;s AI Studio</div>
+            <div className="text-[11px] text-muted-foreground leading-tight">Multi-Model LLM Arena</div>
           </div>
         </div>
         <Button className="w-full" onClick={createNewChat}>

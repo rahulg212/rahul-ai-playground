@@ -146,6 +146,8 @@ export interface Preset {
 export interface AppSettings {
   apiKeys: Record<ProviderId, string>;
   showRawPanel: boolean;
+  customProxyUrl?: string;
+  soundEnabled?: boolean;
 }
 
 /** A model picked as a Race competitor (provider + raw model id). */

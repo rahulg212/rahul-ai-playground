@@ -1,31 +1,60 @@
 /**
- * Transport layer — the single choke point for every HTTP call to a provider.
+ * Transport layer — direct provider HTTP communication.
  *
- * All requests are relayed through the local Next.js route /api/proxy (see
- * src/app/api/proxy/route.ts):
+ * Designed for local-first, zero-backend, client-side execution (perfect for
+ * GitHub Pages and local usage).
  *
- *   - It works in every environment: no dependence on the browser's ability to
- *     reach api.openai.com / api.anthropic.com / ... directly (CORS policies,
- *     sandboxed previews and corporate networks all break direct calls).
- *   - It streams: SSE responses from the provider flow through the route
- *     handler unchanged, so chat "typing" and the Stop button behave exactly
- *     like a direct call.
- *   - It is allowlisted to the four supported provider origins only.
- *
- * The provider adapters still build the REAL provider URL and headers — they
- * are shown (with the key masked) in the Raw debug panel — only the transport
- * is swapped here.
+ * Direct browser calls:
+ *   - Google Gemini: Full CORS enabled by Google API.
+ *   - OpenRouter: Full CORS enabled with public models and free tier.
+ *   - Anthropic: Full CORS enabled via 'anthropic-dangerous-direct-browser-access: true'.
+ *   - OpenAI: Direct browser fetch or optional custom CORS proxy URL.
  */
 
-/** Rewrite an absolute provider URL into a same-origin proxied URL. */
-export function toProxyUrl(url: string): string {
-  return `/api/proxy?target=${encodeURIComponent(url)}`;
+/** Retrieve user-configured proxy if stored in settings. */
+export function getCustomProxy(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const raw = localStorage.getItem('apiPlayground.settings');
+    if (!raw) return '';
+    const parsed = JSON.parse(raw);
+    return (parsed.customProxyUrl || '').trim();
+  } catch {
+    return '';
+  }
 }
 
 /**
- * Drop-in fetch replacement used by the adapters' helpers and the streaming
- * executor. `init` (method / headers / body / signal) is forwarded verbatim.
+ * Rewrites an absolute provider URL if a custom proxy is configured.
+ * Otherwise returns the provider URL directly for client-side fetch.
  */
-export function providerFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(toProxyUrl(url), init);
+export function toProxyUrl(url: string): string {
+  const customProxy = getCustomProxy();
+  if (!customProxy) return url;
+
+  if (customProxy.includes('%s')) {
+    return customProxy.replace('%s', encodeURIComponent(url));
+  }
+  return `${customProxy.replace(/\/+$/, '')}/${encodeURIComponent(url)}`;
+}
+
+/**
+ * Drop-in fetch replacement used by adapters and the streaming executor.
+ */
+export async function providerFetch(url: string, init?: RequestInit): Promise<Response> {
+  const targetUrl = toProxyUrl(url);
+  try {
+    return await fetch(targetUrl, init);
+  } catch (err: unknown) {
+    // If direct fetch failed and it looks like a CORS or network error, provide clear diagnostics
+    const isCorsOrNetwork = err instanceof TypeError && err.message.toLowerCase().includes('fetch');
+    if (isCorsOrNetwork && url.includes('api.openai.com') && !getCustomProxy()) {
+      throw new Error(
+        'OpenAI API direct browser request blocked by browser CORS policy. ' +
+        'Solutions: 1) Use OpenRouter (which proxies OpenAI models with full browser CORS and has free models), ' +
+        '2) Use Google Gemini or Anthropic Claude, or 3) Set a CORS Proxy URL in Settings.',
+      );
+    }
+    throw err;
+  }
 }

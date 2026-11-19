@@ -1,149 +1,72 @@
-# API Playground
+# Rahul's AI Nexus — Multi-Model LLM Arena & Playground
 
-A local-first playground to chat with OpenAI, Anthropic Claude, Google Gemini and OpenRouter models. Provider requests are built in the browser by per-provider adapters and relayed through a small local server proxy (`/api/proxy`), so streaming works in every environment with no CORS issues. API keys, settings and chats are stored in `localStorage`.
+A fast, private, local-first playground & multi-model arena to chat, test, stream, and race models from **OpenAI**, **Anthropic Claude**, **Google Gemini**, and **OpenRouter** directly in your browser.
 
-> **Security warning:** This app is meant for personal and local testing only. API keys live unencrypted in your browser's `localStorage` and pass through the app's local proxy on their way to the providers. Never run it on shared machines or use production keys.
+🌐 **Live GitHub Pages URL:** [https://rg212.github.io/rahul-ai-playground/](https://rg212.github.io/rahul-ai-playground/)
 
-## Features
+---
 
-- 4 providers: OpenAI, Anthropic, Google Gemini, OpenRouter
-- Per-provider API key management with show/hide, a Test Key button (auto-reloads the model list on success), and delete
-- **One-click "Login with OpenRouter"** (OAuth PKCE, inspired by G0DM0D3) — no copy-pasting keys
-- Model lists fetched from each provider's models endpoint, with a searchable dropdown, a "Free only" filter (OpenRouter), free-model badges, and support for custom model IDs
-- Streaming (SSE) responses with a Stop button, for all 4 providers
-- Reasoning support: chain-of-thought from reasoning models (all current OpenRouter `:free` models, Anthropic extended thinking) is shown in a collapsible "Thinking" block
-- Markdown rendering with syntax-highlighted code blocks and a per-block copy button
-- Message actions: copy, edit & resend, regenerate, delete
-- **Quality score** (G0DM0D3 "Tastemaker"-inspired): every assistant answer gets a 0–100 score (structure / completeness / directness / richness / speed) with a grade badge and a breakdown tooltip
-- **Refine (liquid mode)**: one click re-asks the same model to improve its answer; every revision is kept as a version (v1, v2, …) and you can flip between them
-- **Race mode (model arena)**: send one prompt to up to 3 models in parallel (across providers), watch them compete live, and keep the best-scoring answer — flip through all candidates under the bubble
-- **Persona quick-switcher** in the top bar (Default / Code Expert / Concise / Teacher / Creative / Analyst) — one click applies a curated system prompt + recommended temperature
-- System prompt editor with named presets (Helpful Assistant, Code Expert, Translator built in); load, rename and delete presets
-- Generation settings: temperature, max tokens, top_p, stop sequences (disabled when a provider does not support them), reset to defaults
-- Conversation history sidebar with auto-titles, rename, delete and search; each conversation remembers its own provider, model, system prompt and settings
-- Context limit (send all history or only the last N messages) with an approximate token counter
-- Raw debug panel showing the exact JSON request (API key masked) and the raw streamed response
-- Response time, token usage and model shown under each assistant message
-- Clear error messages with HTTP status (invalid key, rate limit, CORS, model not found), transient-failure auto-retry, and one-click "retry with a free model" recovery on OpenRouter
-- Export a conversation as JSON/Markdown, import conversation JSON, and full backup export/import (optionally without API keys)
-- **Three themes**: light, dark, and a G0DM0D3-inspired phosphor **Terminal** theme (green-on-black, JetBrains Mono, scanlines + glow) — the theme button cycles all three
-- Responsive layout, toast notifications
+## ⚡ 10x Improvements & Key Capabilities
 
-## Tech stack
+- **Zero-Backend Direct Browser Streaming**: 100% client-side architecture. Provider calls stream directly from the browser to Gemini, OpenRouter, and Claude without needing any intermediate Node.js server or proxy. Zero latency, zero server hosting costs, and 100% private.
+- **Interactive Code Artifacts & HTML/SVG Live Preview**: Whenever an AI responds with HTML, SVG, or interactive code, toggle seamlessly between **Code** and **Live Preview** to run and inspect the live interactive UI right inside the chat (like Claude Artifacts and ChatGPT Canvas).
+- **Voice Dictation (Speech-to-Text)**: Speak your prompts directly using the browser's native Web Speech API with real-time transcription and microphone feedback.
+- **Text-to-Speech (Audio Read Aloud)**: Click the speaker button on any assistant message to listen to the response spoken aloud using native speech synthesis.
+- **Synthesized Audio Effects**: Native Web Audio API sound effects for message send blips and completion chimes (can be muted anytime in the top bar or settings).
+- **Model Arena (Race Mode)**: Fire the same prompt across up to 3 models simultaneously in parallel, observe live streaming progress, and automatically grade and select the best candidate.
+- **Quality Score Engine ("Tastemaker")**: Every AI response is automatically evaluated on structure, completeness, directness, richness, and speed with an objective 0–100 score and grade badge.
+- **Liquid Refine (Version Navigator)**: One-click iterative refinement to prompt the same model to improve its output while preserving full version history (v1, v2, v3...).
+- **Prompt Starter Cards**: Clean empty state with high-value starter prompts across Coding, UI Design, Deep Reasoning, and AI Analysis.
+- **Persona Quick-Switcher**: One-click top-bar switcher for curated personas (Code Expert, Concise, Teacher, Creative, Analyst) with calibrated temperature and system instructions.
+- **Full Privacy & Storage**: All API keys, conversations, and presets are saved locally in browser `localStorage`. No keys ever touch a 3rd party backend.
+- **Three Immersive Themes**: Light, Dark, and retro green-on-black phosphor Terminal mode with scanlines and glowing JetBrains Mono typography.
 
-- Next.js 16 (App Router), React 19, TypeScript 5
-- Tailwind CSS 4, shadcn/ui + Lucide icons
-- react-markdown + remark-gfm + react-syntax-highlighter
-- sonner toasts, next-themes
+---
 
-There is no backend and no database — everything runs client-side in the browser.
+## 🚀 Supported Providers
 
-## Getting started
+1. **OpenRouter**:
+   - One-click **"Login with OpenRouter"** (OAuth PKCE flow — no copy-pasting required).
+   - Instant access to completely free models (`:free`) such as DeepSeek, Llama 3.3, and Qwen with zero credit card required.
+   - Public models directory search with context size and token pricing info.
+2. **Google Gemini**:
+   - Direct browser streaming via Gemini 2.5 / 1.5 Flash and Pro models.
+   - High speed and generous free tiers via Google AI Studio.
+3. **Anthropic Claude**:
+   - Claude 3.5 Sonnet, Haiku, and Opus.
+   - Full support for extended thinking / reasoning tokens.
+   - Official direct browser CORS with `anthropic-dangerous-direct-browser-access`.
+4. **OpenAI**:
+   - GPT-4o, GPT-4o-mini, o1, o3-mini, and custom model IDs.
+   - Direct browser mode or optional custom CORS proxy URL configurable in Settings.
 
-Prerequisites: Node.js 18.18+ (or Bun).
+---
+
+## 🛠️ Getting Started Locally
+
+Prerequisites: Node.js 18.18+
 
 ```bash
+# Install dependencies
 npm install
+
+# Start development server
 npm run dev
 ```
 
-Then open http://localhost:3000.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-To lint the project, run `npm run lint`. (The project was originally developed with Bun; npm works the same.)
+### Static Build (for GitHub Pages / Hosting)
 
-## Architecture
-
-```
-src/app/api/proxy/route.ts        Local streaming relay for provider APIs (origin allowlist, SSE pass-through)
-src/lib/types.ts                  Shared types (ChatMessage, Conversation, ProviderAdapter, ...)
-src/lib/transport.ts              providerFetch — routes every provider call through /api/proxy
-src/lib/sse.ts                    Streaming SSE parser
-src/lib/streaming.ts              The single place that executes a streamed chat request (maskHeaders, runChatStream)
-src/lib/errors.ts                 Error normalization (PlaygroundError: auth / rate limit / not found / CORS / ...)
-src/lib/storage.ts                localStorage keys, defaults, factories
-src/lib/tokens.ts                 Approximate token counting, context limit, auto titles
-src/lib/score.ts                  Quality scoring (Tastemaker-lite): structure / completeness / directness / richness / speed
-src/lib/messageView.ts            Display resolution for race candidates + refine versions
-src/lib/personas.ts               Built-in personas for the top-bar quick switcher
-src/lib/openrouterOAuth.ts        OpenRouter OAuth (PKCE): login redirect, code exchange
-src/lib/exportUtils.ts            JSON/Markdown export + full backups
-src/lib/providerAdapters/         One adapter per provider:
-  openai.ts                       POST /v1/chat/completions, Bearer auth, system role message; handles
-                                  o1/o3/o4/gpt-5 reasoning models (which need max_completion_tokens)
-  anthropic.ts                    POST /v1/messages, x-api-key + anthropic-version +
-                                  anthropic-dangerous-direct-browser-access headers, top-level system
-                                  field, max_tokens required
-  gemini.ts                       POST .../models/{model}:streamGenerateContent?alt=sse, x-goog-api-key
-                                  header, systemInstruction, roles user/model
-  openrouter.ts                   OpenAI-compatible + HTTP-Referer/X-Title headers, usage include,
-                                  reasoning deltas, public models endpoint, key test via /api/v1/auth/key.
-                                  Default model is a ":free" model (free-tier keys have no credits)
-  index.ts                        Registry (getAdapter) + DEFAULT_PRESETS
-  shared.ts                       Models-list mapping helpers
-src/hooks/useLocalStorage.ts      localStorage state via useSyncExternalStore, with cross-tab sync
-src/components/playground/        UI layer:
-  context.tsx                     PlaygroundProvider: all app state and actions (conversations,
-                                  streaming, keys, models, presets, import/export)
-  *.tsx                           Components (Sidebar, TopBar, ChatArea, MessageBubble, ChatInput,
-                                  MarkdownRenderer, SettingsPanel + sections, RawPanel)
-src/app/page.tsx + layout.tsx     The single page and the theme/toast providers
+```bash
+# Build static export
+npm run build
 ```
 
-## How provider calls are transported
+This exports pure static HTML/CSS/JS into the `out/` folder, ready for deployment to GitHub Pages, Cloudflare Pages, Netlify, Vercel, or any static host.
 
-The adapters still build the exact provider URL and headers (visible in the Raw debug panel, key masked). `src/lib/transport.ts` swaps only the transport: every call goes to `/api/proxy?target=<provider-url>`, a Next.js route that:
+---
 
-- is allowlisted to the four provider origins only (no open relay),
-- forwards method, auth headers and JSON body unchanged,
-- streams the response (including SSE) straight back so token-by-token streaming and the Stop button work as usual.
+## 📦 Automated GitHub Pages Deployment
 
-This avoids every provider's CORS restrictions (Anthropic would otherwise require the `anthropic-dangerous-direct-browser-access` header) and makes the app work in sandboxed/preview environments and restricted networks.
-
-## Testing with OpenRouter (free)
-
-1. Create a free key at https://openrouter.ai/keys and paste it into the Provider & API Key section.
-2. Press **Test Key** — a valid key reports your limit/usage and the model list loads immediately.
-3. Open the Model dropdown and hit **Free only** to see the models that cost nothing (IDs ending in `:free`). The default model is already a free one.
-4. Note: free models on OpenRouter are reasoning models — their chain-of-thought streams into a collapsible "Thinking" block before the answer appears.
-
-## Adding a new provider
-
-Providers are self-contained adapters. The UI (provider dropdown, key manager, model selector) picks a new one up automatically.
-
-1. Add the id to the `ProviderId` union in `src/lib/types.ts`:
-
-   ```ts
-   export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'mistral';
-   ```
-
-2. Create `src/lib/providerAdapters/<name>.ts` implementing the `ProviderAdapter` interface:
-
-   ```ts
-   import type { ProviderAdapter } from '@/lib/types';
-
-   export const mistralAdapter: ProviderAdapter = {
-     id: 'mistral',
-     label: 'Mistral',
-     defaultModel: 'mistral-large-latest',
-     capabilities: { temperature: true, maxTokens: true, topP: true, stopSequences: true },
-     fetchModels(apiKey) { /* call GET /v1/models, map to ModelInfo[] */ },
-     testKey(apiKey) { /* cheap validation call, return { ok, message } */ },
-     buildChatRequest(args) { /* return { url, headers, body } from internal format */ },
-     extractDelta(json) { /* pull the text delta out of one streamed payload, or null */ },
-     extractUsage(json) { /* pull partial token usage out of one payload, or null */ },
-     // optional: isFinalPayload?(payload) { /* return true when this SSE payload ends the stream */ },
-   };
-   ```
-
-3. Register it in `src/lib/providerAdapters/index.ts` (add it to the `ADAPTERS` map) and add a default empty key in `defaultSettings()` in `src/lib/storage.ts`.
-
-4. Add its origin to `ALLOWED_ORIGINS` in `src/app/api/proxy/route.ts`.
-
-5. Add its label to `PROVIDER_LABELS` in `src/lib/errors.ts` so error messages use the provider's name.
-
-## Privacy & security notes
-
-- Provider requests are relayed through the local `/api/proxy` route; the proxy is restricted to the four provider origins and is intended for local testing only.
-- API keys are stored unencrypted in `localStorage`. Anyone with access to your browser profile can read them.
-- Do not use production keys. Create restricted, low-limit test keys for the providers you try.
-- You can remove a key at any time with its Delete button, or clear everything the app stores by clearing site data in your browser.
+The repository includes a ready-to-use GitHub Actions workflow (`.github/workflows/deploy.yml`) that automatically builds and publishes the site to GitHub Pages on every push to `main`.

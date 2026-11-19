@@ -7,7 +7,7 @@
  * drawer on mobile.
  */
 import React from 'react';
-import { Bug, X } from 'lucide-react';
+import { Bug, Globe, Volume2, X } from 'lucide-react';
 import { usePlayground } from '@/components/playground/context';
 import { ApiKeySection } from '@/components/playground/ApiKeySection';
 import { ContextSection } from '@/components/playground/ContextSection';
@@ -19,7 +19,59 @@ import { SystemPromptSection } from '@/components/playground/SystemPromptSection
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+
+/** Connection and Audio settings */
+function ConnectionSection() {
+  const { customProxyUrl, setCustomProxyUrl, soundEnabled, setSoundEnabled } = usePlayground();
+
+  return (
+    <SettingsSection title="Connection & Audio" icon={Globe}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-normal">Browser Direct Streaming</Label>
+          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+            Active · Zero Backend
+          </Badge>
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Requests stream directly from your browser to Gemini, OpenRouter, and Claude. No intermediary server needed.
+        </p>
+
+        <div className="flex items-center justify-between pt-1">
+          <Label htmlFor="sound-toggle" className="text-xs font-normal flex items-center gap-1.5">
+            <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
+            Sound effects (Chimes &amp; Blips)
+          </Label>
+          <Switch
+            id="sound-toggle"
+            checked={soundEnabled}
+            onCheckedChange={setSoundEnabled}
+            aria-label="Toggle sound effects"
+          />
+        </div>
+
+        <div className="space-y-1.5 pt-1 border-t">
+          <Label htmlFor="custom-proxy" className="text-xs font-normal">
+            Custom CORS Proxy (Optional)
+          </Label>
+          <Input
+            id="custom-proxy"
+            value={customProxyUrl}
+            onChange={(e) => setCustomProxyUrl(e.target.value)}
+            placeholder="e.g. https://corsproxy.io/?url="
+            className="h-8 text-xs font-mono"
+          />
+          <p className="text-[10px] leading-relaxed text-muted-foreground">
+            Leave blank for direct browser calls. For direct OpenAI keys without OpenRouter, you can specify a CORS proxy here.
+          </p>
+        </div>
+      </div>
+    </SettingsSection>
+  );
+}
 
 /** Raw/debug toggle lives in its own mini section. */
 function DebugSection() {
@@ -71,6 +123,7 @@ function SettingsContent() {
         <SystemPromptSection />
         <GenerationSection />
         <ContextSection />
+        <ConnectionSection />
         <DebugSection />
         <DataSection />
       </div>

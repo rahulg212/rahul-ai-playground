@@ -14,9 +14,12 @@ import {
   Moon,
   PanelLeft,
   PanelRight,
+  Plus,
   Sun,
   Terminal,
   TerminalSquare,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
@@ -139,6 +142,9 @@ export function TopBar() {
     showRawPanel,
     setShowRawPanel,
     nextRequestTokens,
+    createConversation,
+    soundEnabled,
+    setSoundEnabled,
   } = usePlayground();
 
   return (
@@ -194,6 +200,26 @@ export function TopBar() {
           title="Raw request/response"
         >
           <TerminalSquare className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          onClick={() => setSoundEnabled(!soundEnabled)}
+          aria-label={soundEnabled ? 'Mute audio effects' : 'Enable audio effects'}
+          title={soundEnabled ? 'Audio effects ON (Click to mute)' : 'Audio effects MUTED (Click to enable)'}
+        >
+          {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4 text-muted-foreground/60" />}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="hidden sm:inline-flex h-8 gap-1 px-2.5 text-xs"
+          onClick={createConversation}
+          title="New Chat"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span>New</span>
         </Button>
         <ThemeToggle />
         <Button

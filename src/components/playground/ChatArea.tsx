@@ -1,37 +1,109 @@
 'use client';
 
 /**
- * The main chat area: scrollable message list, empty state, error banner,
- * live race panel (multi-model arena), raw debug panel and the composer.
+ * The main chat area: scrollable message list, empty state with quick starters,
+ * error banner, live race panel (multi-model arena), raw debug panel and the composer.
  * Auto-scrolls to the newest content while the user is near the bottom.
  */
 import React, { useEffect, useRef } from 'react';
-import { AlertTriangle, CheckCircle2, KeyRound, Loader2, Settings2, Trophy } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bot,
+  Brain,
+  CheckCircle2,
+  Code2,
+  KeyRound,
+  Loader2,
+  Palette,
+  Sparkles,
+  Trophy,
+  Zap,
+} from 'lucide-react';
 import { usePlayground } from '@/components/playground/context';
 import { ChatErrorBanner, MessageBubble } from '@/components/playground/MessageBubble';
 import { ChatInput } from '@/components/playground/ChatInput';
 import { RawPanel } from '@/components/playground/RawPanel';
 import { Button } from '@/components/ui/button';
 
-/** Shown when the conversation has no messages yet. */
+const QUICK_STARTERS = [
+  {
+    icon: Code2,
+    title: 'Code Optimization',
+    prompt: 'Write a type-safe debounce utility in TypeScript with cancel and immediate execution options, along with unit tests.',
+    gradient: 'from-blue-500/10 to-cyan-500/10 border-blue-500/20 hover:border-blue-500/40',
+  },
+  {
+    icon: Palette,
+    title: 'Interactive UI Artifact',
+    prompt: 'Create a clean, modern HTML/CSS landing page hero section with an animated gradient background and an interactive CTA button.',
+    gradient: 'from-purple-500/10 to-pink-500/10 border-purple-500/20 hover:border-purple-500/40',
+  },
+  {
+    icon: Brain,
+    title: 'Deep Architecture',
+    prompt: 'Explain the core architectural differences and tradeoffs between microfrontends, server components, and islands architecture.',
+    gradient: 'from-amber-500/10 to-orange-500/10 border-amber-500/20 hover:border-amber-500/40',
+  },
+  {
+    icon: Zap,
+    title: 'Fast Free AI Test',
+    prompt: 'Summarize the top 5 emerging artificial intelligence design patterns in 2026 into a clean comparison table.',
+    gradient: 'from-emerald-500/10 to-teal-500/10 border-emerald-500/20 hover:border-emerald-500/40',
+  },
+];
+
+/** Shown when the conversation has no messages yet — rich 10x interactive starter screen. */
 function EmptyState() {
-  const { setMobileDrawer, toggleSettings } = usePlayground();
+  const { setMobileDrawer, toggleSettings, sendMessage, activeConversation, setProvider } = usePlayground();
+
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <div className="max-w-md space-y-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border bg-muted">
-          <Settings2 className="h-6 w-6 text-muted-foreground" />
+    <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">
+      <div className="w-full max-w-2xl space-y-6 text-center">
+        {/* Hero badge */}
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border bg-gradient-to-br from-primary/15 via-muted to-muted shadow-xs">
+          <Sparkles className="h-7 w-7 text-primary animate-pulse" />
         </div>
-        <div className="space-y-1.5">
-          <h2 className="text-lg font-semibold">Start testing your API key</h2>
-          <ol className="mx-auto max-w-xs list-decimal space-y-1 text-left text-sm text-muted-foreground">
-            <li>Pick a provider in the settings panel (right).</li>
-            <li>Paste an API key and press Save, then Test Key.</li>
-            <li>Pick a model from the header picker — or type a custom ID.</li>
-            <li>Write a system prompt (or load a preset) and send a message.</li>
-          </ol>
+
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-1.5 rounded-full border bg-muted/60 px-3 py-1 text-xs font-medium text-muted-foreground">
+            <Bot className="h-3.5 w-3.5 text-primary" />
+            <span>Rahul&apos;s AI Nexus · Multi-Model LLM Arena</span>
+          </div>
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight">
+            How can I help you today?
+          </h2>
+          <p className="mx-auto max-w-md text-xs md:text-sm text-muted-foreground leading-relaxed">
+            Test, stream, and race models from OpenAI, Anthropic, Gemini, and OpenRouter directly in your browser. Local-first, private, and zero backend.
+          </p>
         </div>
-        <div className="flex items-center justify-center gap-2">
+
+        {/* Quick prompt cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left">
+          {QUICK_STARTERS.map((starter) => {
+            const Icon = starter.icon;
+            return (
+              <button
+                key={starter.title}
+                type="button"
+                onClick={() => void sendMessage(starter.prompt)}
+                className={`group flex flex-col justify-between rounded-xl border bg-gradient-to-br p-3.5 transition-all duration-200 hover:scale-[1.01] hover:shadow-sm ${starter.gradient}`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="p-1 rounded-md bg-background/80 border text-foreground group-hover:text-primary transition-colors">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-semibold text-foreground">{starter.title}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                  {starter.prompt}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Free models notice & action row */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
           <Button
             variant="outline"
             size="sm"
@@ -39,13 +111,25 @@ function EmptyState() {
               toggleSettings();
               setMobileDrawer(null);
             }}
+            className="text-xs h-8"
           >
-            <KeyRound className="h-4 w-4" /> Open settings
+            <KeyRound className="h-3.5 w-3.5 mr-1" /> Configure API Keys
           </Button>
+
+          {activeConversation?.provider !== 'openrouter' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setProvider('openrouter')}
+              className="text-xs h-8 bg-primary/10 hover:bg-primary/20 text-primary border-primary/20"
+            >
+              <Zap className="h-3.5 w-3.5 mr-1" /> Try Free Models (OpenRouter)
+            </Button>
+          )}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Keys, chats and settings are stored only in this browser&apos;s localStorage. This app is
-          meant for personal, local testing.
+
+        <p className="text-[11px] text-muted-foreground/80">
+          🔒 All API keys, settings, and conversations are stored exclusively in your local browser storage.
         </p>
       </div>
     </div>
@@ -62,7 +146,7 @@ function RaceLivePanel() {
   if (!raceLive) return null;
   return (
     <div
-      className="mx-auto mb-4 w-full max-w-3xl rounded-xl border border-dashed p-3"
+      className="mx-auto mb-4 w-full max-w-3xl rounded-xl border border-dashed p-3 bg-muted/20"
       role="status"
       aria-label="Race in progress"
     >
@@ -74,7 +158,7 @@ function RaceLivePanel() {
         {raceLive.candidates.map((candidate, index) => (
           <div
             key={`${candidate.provider}-${candidate.model}-${index}`}
-            className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs"
+            className="flex items-center gap-2 rounded-lg bg-background/80 border px-2.5 py-1.5 text-xs"
           >
             {candidate.done ? (
               candidate.error ? (
@@ -85,20 +169,20 @@ function RaceLivePanel() {
             ) : (
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
             )}
-            <span className="min-w-0 flex-1 truncate font-mono" title={candidate.model}>
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px]" title={candidate.model}>
               {candidate.model}
             </span>
             {candidate.error ? (
-              <span className="max-w-[280px] truncate text-destructive" title={candidate.error}>
+              <span className="max-w-[280px] truncate text-destructive text-[11px]" title={candidate.error}>
                 {candidate.error}
               </span>
             ) : (
-              <span className="tabular-nums text-muted-foreground">
+              <span className="tabular-nums text-muted-foreground text-[11px]">
                 {candidate.done
                   ? `${(candidate.responseTimeMs ?? 0) / 1000 > 0 ? `${((candidate.responseTimeMs ?? 0) / 1000).toFixed(1)}s · ` : ''}${candidate.text.length} chars`
                   : candidate.text.length > 0
                     ? `streaming · ${candidate.text.length} chars`
-                    : 'waiting for first token…'}
+                    : 'connecting…'}
               </span>
             )}
           </div>
@@ -109,78 +193,69 @@ function RaceLivePanel() {
 }
 
 export function ChatArea() {
-  const {
-    activeConversation,
-    isStreaming,
-    streamingConvId,
-    streamingText,
-    streamingReasoning,
-    chatError,
-    raceLive,
-  } = usePlayground();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  // Only follow the stream while the user has not scrolled up to read.
-  const nearBottomRef = useRef(true);
+  const { activeConversation, isStreaming, streamingText, streamingReasoning, streamingConvId } =
+    usePlayground();
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  const conversation = activeConversation;
-  const messages = conversation?.messages ?? [];
-  const showStreamingHere = isStreaming && streamingConvId === conversation?.id;
-  const showRaceHere = raceLive !== null && raceLive.conversationId === conversation?.id;
+  const messages = activeConversation?.messages ?? [];
+  const isEmpty = messages.length === 0;
 
-  // Auto-scroll when new content arrives.
+  // Auto-scroll while streaming when the user is already near the bottom.
   useEffect(() => {
-    const element = scrollRef.current;
-    if (!element || !nearBottomRef.current) return;
-    element.scrollTop = element.scrollHeight;
-  }, [messages.length, streamingText, streamingReasoning, chatError, showStreamingHere, showRaceHere]);
-
-  const handleScroll = () => {
-    const element = scrollRef.current;
+    const element = scrollAreaRef.current;
     if (!element) return;
-    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-    nearBottomRef.current = distance < 120;
-  };
-
-  if (!conversation) return null;
+    const threshold = 160;
+    const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < threshold;
+    if (isNearBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, streamingText, streamingReasoning]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} onScroll={handleScroll} className="scrollbar-thin flex-1 overflow-y-auto">
-        {messages.length === 0 && !showStreamingHere ? (
-          <EmptyState />
-        ) : (
-          <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
-            {showRaceHere && <RaceLivePanel />}
-            {messages.map((message, index) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                isLast={index === messages.length - 1 && !showStreamingHere}
-              />
-            ))}
-            {/* Live placeholder bubble fed by the streaming deltas. */}
-            {showStreamingHere && (
-              <MessageBubble
-                message={{
-                  id: '__streaming__',
-                  role: 'assistant',
-                  content: streamingText,
-                  reasoning: streamingReasoning || undefined,
-                  createdAt: Date.now(),
-                }}
-                isLast
-                streaming
-              />
-            )}
-          </div>
-        )}
+      <div ref={scrollAreaRef} className="scrollbar-thin flex-1 overflow-y-auto px-4 py-6 md:px-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+          {isEmpty ? (
+            <EmptyState />
+          ) : (
+            <>
+              {messages.map((message, index) => (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  isLast={index === messages.length - 1}
+                />
+              ))}
+
+              {/* In-flight streaming bubble for single-model completion */}
+              {isStreaming && streamingConvId === activeConversation?.id && (
+                <MessageBubble
+                  message={{
+                    id: 'streaming',
+                    role: 'assistant',
+                    content: streamingText,
+                    reasoning: streamingReasoning,
+                    createdAt: Date.now(),
+                    meta: {
+                      model: activeConversation?.model ?? 'streaming…',
+                    },
+                  }}
+                  isLast={true}
+                  streaming={true}
+                />
+              )}
+
+              <RaceLivePanel />
+              <ChatErrorBanner />
+            </>
+          )}
+          <div ref={bottomRef} className="h-px" />
+        </div>
       </div>
-      <div className="px-3 pb-2">
-        <ChatErrorBanner />
-      </div>
+
       <RawPanel />
-      {/* key remounts the composer per conversation → restores the saved draft. */}
-      <ChatInput key={conversation?.id ?? 'none'} />
+      <ChatInput key={activeConversation?.id} />
     </div>
   );
 }

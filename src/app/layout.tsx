@@ -21,10 +21,10 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'API Playground — Test your LLM API keys',
+  title: "Rahul's AI Nexus — Multi-Model LLM Arena & Playground",
   description:
-    'A local-first playground for chatting with OpenAI, Anthropic Claude, Google Gemini and OpenRouter models directly from your browser.',
-  keywords: ['API Playground', 'LLM', 'OpenAI', 'Anthropic', 'Gemini', 'OpenRouter', 'API testing'],
+    "A fast, local-first multi-model LLM arena to chat, stream, test, and race OpenAI, Anthropic Claude, Google Gemini, and OpenRouter models directly from your browser. 100% private, zero backend.",
+  keywords: ['Rahul AI Nexus', 'LLM Arena', 'OpenAI', 'Anthropic', 'Gemini', 'OpenRouter', 'AI Playground'],
 };
 
 export default function RootLayout({

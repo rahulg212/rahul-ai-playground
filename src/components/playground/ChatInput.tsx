@@ -10,7 +10,8 @@
  *     parallel and keep the best answer
  */
 import React, { useMemo, useRef, useState } from 'react';
-import { ArrowUp, KeyRound, Plus, Square, Trophy, X } from 'lucide-react';
+import { ArrowUp, KeyRound, Mic, MicOff, Plus, Square, Trophy, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { usePlayground } from '@/components/playground/context';
 import { providerLabel } from '@/lib/errors';
 import { loadJson, saveJson, STORAGE_KEYS } from '@/lib/storage';
@@ -160,10 +161,73 @@ export function ChatInput() {
     toggleRace,
   } = usePlayground();
   const [text, setText] = useState(() => (activeConversation?.id ? readDraft(activeConversation.id) : ''));
+  const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
   const conversationId = activeConversation?.id ?? null;
   // Note: ChatInput is remounted with key={conversationId} by ChatArea, so the
   // lazy useState above re-reads the persisted draft on every chat switch.
+
+  const toggleListening = () => {
+    if (isListening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // ignore
+      }
+      setIsListening(false);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error('Voice input is not supported in this browser. Try Chrome or Edge.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        toast.info('Listening… Speak your prompt');
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        if (transcript.trim()) {
+          setText((prev) => {
+            const updated = prev ? `${prev} ${transcript}` : transcript;
+            if (conversationId) writeDraft(conversationId, updated);
+            return updated;
+          });
+          autoResize();
+        }
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      toast.error('Could not activate microphone.');
+    }
+  };
 
   const autoResize = () => {
     const element = textareaRef.current;
@@ -278,6 +342,20 @@ export function ChatInput() {
             rows={1}
             className="max-h-[200px] min-h-[40px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0"
           />
+          <Button
+            type="button"
+            onClick={toggleListening}
+            variant="ghost"
+            size="icon"
+            className={cn(
+              'h-9 w-9 shrink-0 rounded-lg transition-colors',
+              isListening ? 'text-destructive bg-destructive/10 animate-pulse' : 'text-muted-foreground hover:text-foreground',
+            )}
+            title={isListening ? 'Stop listening' : 'Voice input (Speech to text)'}
+            aria-label={isListening ? 'Stop listening' : 'Voice input'}
+          >
+            {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </Button>
           {isStreaming ? (
             <Button
               onClick={stopStreaming}

@@ -38,6 +38,7 @@ import { getAdapter } from '@/lib/providerAdapters';
 import { DEFAULT_MODELS, PROVIDER_IDS } from '@/lib/providerDefaults';
 import { scoreResponse } from '@/lib/score';
 import { runChatStream } from '@/lib/streaming';
+import { playReceiveSound, playSendSound } from '@/lib/sound';
 import {
   STORAGE_KEYS,
   createConversation,
@@ -208,10 +209,14 @@ export interface PlaygroundContextValue {
   renamePreset: (id: string, name: string) => void;
   deletePreset: (id: string) => void;
 
-  // Debug
+  // Debug & Connection
   showRawPanel: boolean;
   setShowRawPanel: (value: boolean) => void;
   rawDebug: RawDebug | null;
+  customProxyUrl: string;
+  setCustomProxyUrl: (url: string) => void;
+  soundEnabled: boolean;
+  setSoundEnabled: (enabled: boolean) => void;
 
   // UI layout
   sidebarOpen: boolean;
@@ -603,6 +608,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
           }
         }
         if (!outcome) throw new Error('Chat failed without a response.');
+        playReceiveSound(settingsRef.current.soundEnabled ?? true);
         appendAssistant(
           outcome.text || '*(empty response)*',
           {
@@ -1095,6 +1101,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     async (text: string) => {
       const conversation = activeConversationRef.current;
       if (!conversation || isStreamingRef.current) return;
+      playSendSound(settingsRef.current.soundEnabled ?? true);
       const userMessage: ChatMessage = {
         id: uid(),
         role: 'user',
@@ -1328,11 +1335,23 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     [setPresets],
   );
 
-  /* ---------------- debug panel ---------------- */
+  /* ---------------- debug panel & connection ---------------- */
 
   const showRawPanel = settings.showRawPanel;
   const setShowRawPanel = useCallback(
     (value: boolean) => setSettings((previous) => ({ ...previous, showRawPanel: value })),
+    [setSettings],
+  );
+
+  const customProxyUrl = settings.customProxyUrl || '';
+  const setCustomProxyUrl = useCallback(
+    (url: string) => setSettings((previous) => ({ ...previous, customProxyUrl: url })),
+    [setSettings],
+  );
+
+  const soundEnabled = settings.soundEnabled ?? true;
+  const setSoundEnabled = useCallback(
+    (enabled: boolean) => setSettings((previous) => ({ ...previous, soundEnabled: enabled })),
     [setSettings],
   );
 
@@ -1466,6 +1485,10 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     showRawPanel,
     setShowRawPanel,
     rawDebug,
+    customProxyUrl,
+    setCustomProxyUrl,
+    soundEnabled,
+    setSoundEnabled,
     sidebarOpen,
     toggleSidebar: () => setSidebarOpen((v) => !v),
     settingsOpen,
